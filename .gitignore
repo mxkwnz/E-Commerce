@@ -1,5 +1,6 @@
 # Binaries
 *.exe
+*.exe~
 *.dll
 *.so
 *.dylib
@@ -10,6 +11,9 @@
 vendor/
 go.work
 go.work.sum
+
+# Go workspace
+go.work
 
 # IDE
 .idea/
@@ -26,3 +30,8 @@ dist/
 
 # Env
 .env
+.env.*
+
+# IDE
+.idea/
+.vscode/
