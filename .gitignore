@@ -1,24 +1,28 @@
-version: "3.9"
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
 
-services:
-  postgres-order:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: order_db
-    ports:
-      - "5435:5432"
+# Go
+vendor/
+go.work
+go.work.sum
 
-  nats:
-    image: nats:2.10
-    ports:
-      - "4222:4222"
+# IDE
+.idea/
+.vscode/
+*.swp
 
-  order-service:
-    build: ./order-service
-    depends_on:
-      - postgres-order
-      - nats
-    ports:
-      - "8083:8083"
+# OS
+.DS_Store
+
+# Frontend (exclude completely)
+frontend-angular/
+node_modules/
+dist/
+
+# Env
+.env
