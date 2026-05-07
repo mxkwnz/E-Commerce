@@ -49,6 +49,10 @@ func main() {
 	mux.HandleFunc("GET /reviews/{id}", s.getReviewByID)
 	mux.HandleFunc("POST /reviews", s.createReview)
 
+	mux.HandleFunc("PUT /payments/{id}", s.updatePayment)
+	mux.HandleFunc("DELETE /payments/{id}", s.deletePayment)
+	mux.HandleFunc("GET /payments/user/{userId}", s.getPaymentsByUserID)
+
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "payment-service"})
 	})
@@ -144,6 +148,58 @@ func (s *server) createReview(w http.ResponseWriter, r *http.Request) {
 	s.reviews[in.ID] = in
 	s.mu.Unlock()
 	writeJSON(w, http.StatusCreated, in)
+}
+
+func (s *server) updatePayment(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var in payment
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	s.mu.Lock()
+	p, ok := s.payments[id]
+	if ok && !p.IsDeleted {
+		if in.Status != "" {
+			p.Status = in.Status
+		}
+		s.payments[id] = p
+	}
+	s.mu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *server) deletePayment(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.mu.Lock()
+	p, ok := s.payments[id]
+	if ok {
+		p.IsDeleted = true
+		s.payments[id] = p
+	}
+	s.mu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+func (s *server) getPaymentsByUserID(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("userId")
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := []payment{}
+	for _, p := range s.payments {
+		if !p.IsDeleted && p.UserID == userID {
+			out = append(out, p)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

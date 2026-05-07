@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/final-ap2-course2/auth-service/internal/usecase"
 )
 
 type user struct {
@@ -36,9 +38,14 @@ func main() {
 
 	mux.HandleFunc("POST /auth/register", s.register)
 	mux.HandleFunc("POST /auth/login", s.login)
+	mux.HandleFunc("POST /auth/forgot-password", s.forgotPassword)
+	mux.HandleFunc("POST /auth/reset-password", s.resetPassword)
+
 	mux.HandleFunc("GET /users", s.getUsers)
-	mux.HandleFunc("GET /users/{id}", s.getUserByID)
 	mux.HandleFunc("POST /users", s.createUser)
+	mux.HandleFunc("GET /users/{id}", s.getUserByID)
+	mux.HandleFunc("PUT /users/{id}", s.updateUser)
+	mux.HandleFunc("DELETE /users/{id}", s.deleteUser)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "auth-service"})
@@ -82,6 +89,41 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 }
 
+func (s *server) forgotPassword(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Email string `json:"email"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil || in.Email == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	_ = usecase.SendResetEmail(in.Email)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "reset token sent"})
+}
+
+func (s *server) resetPassword(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		UserID      string `json:"userId"`
+		NewPassword string `json:"newPassword"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil || in.UserID == "" || in.NewPassword == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	s.mu.Lock()
+	u, ok := s.users[in.UserID]
+	if ok {
+		u.Password = in.NewPassword
+		s.users[in.UserID] = u
+	}
+	s.mu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "password updated"})
+}
+
 func (s *server) getUsers(w http.ResponseWriter, _ *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -93,6 +135,10 @@ func (s *server) getUsers(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *server) createUser(w http.ResponseWriter, r *http.Request) {
+	s.register(w, r)
 }
 
 func (s *server) getUserByID(w http.ResponseWriter, r *http.Request) {
@@ -108,8 +154,56 @@ func (s *server) getUserByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, u)
 }
 
-func (s *server) createUser(w http.ResponseWriter, r *http.Request) {
-	s.register(w, r)
+func (s *server) updateUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var in user
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	s.mu.Lock()
+	u, ok := s.users[id]
+	if ok && !u.IsDeleted {
+		if in.Username != "" {
+			u.Username = in.Username
+		}
+		if in.FirstName != "" {
+			u.FirstName = in.FirstName
+		}
+		if in.LastName != "" {
+			u.LastName = in.LastName
+		}
+		if in.Email != "" {
+			u.Email = in.Email
+		}
+		if in.PhoneNumber != "" {
+			u.PhoneNumber = in.PhoneNumber
+		}
+		s.users[id] = u
+	}
+	s.mu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	u.Password = ""
+	writeJSON(w, http.StatusOK, u)
+}
+
+func (s *server) deleteUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.mu.Lock()
+	u, ok := s.users[id]
+	if ok {
+		u.IsDeleted = true
+		s.users[id] = u
+	}
+	s.mu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
