@@ -1,0 +1,16 @@
+postgres-payment:
+  image: postgres:16
+  environment:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: payment_db
+  ports:
+    - "5436:5432"
+
+  payment-service:
+    build: ./payment-service
+    depends_on:
+      - postgres-payment
+      - nats
+    ports:
+      - "8084:8084"
