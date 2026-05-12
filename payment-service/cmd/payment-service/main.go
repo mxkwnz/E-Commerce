@@ -1,71 +1,91 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 type payment struct {
-	ID        string  `json:"id"`
-	UserID    string  `json:"userId"`
-	Amount    float64 `json:"amount"`
-	OrderID   string  `json:"orderId"`
-	Status    string  `json:"status"`
-	IsDeleted bool    `json:"isDeleted"`
-}
-
-type review struct {
-	ID        string `json:"id"`
-	Rating    int    `json:"rating"`
-	UserID    string `json:"userId"`
-	ProductID string `json:"productId"`
-	Comment   string `json:"comment"`
-	IsDeleted bool   `json:"isDeleted"`
+	ID              string  `json:"id"`
+	UserID          string  `json:"userId"`
+	Amount          float64 `json:"amount"`
+	Currency        string  `json:"currency"`
+	OrderID         string  `json:"orderId"`
+	Status          string  `json:"status"`
+	PaymentMethod   string  `json:"paymentMethod,omitempty"`
+	TransactionID   string  `json:"transactionId,omitempty"`
+	IsDeleted       bool    `json:"isDeleted"`
 }
 
 type server struct {
 	mu       sync.RWMutex
 	payments map[string]payment
-	reviews  map[string]review
 }
 
 func main() {
+	addr := getenv("HTTP_ADDR", ":8084")
+
 	s := &server{
 		payments: map[string]payment{},
-		reviews:  map[string]review{},
 	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /payments/pay", s.pay)
 	mux.HandleFunc("POST /payments", s.createPayment)
 	mux.HandleFunc("GET /payments", s.getPayments)
+	mux.HandleFunc("GET /payments/user/{userId}", s.getPaymentsByUserID)
 	mux.HandleFunc("GET /payments/{id}", s.getPaymentByID)
-
-	mux.HandleFunc("GET /reviews", s.getReviews)
-	mux.HandleFunc("GET /reviews/{id}", s.getReviewByID)
-	mux.HandleFunc("POST /reviews", s.createReview)
-
 	mux.HandleFunc("PUT /payments/{id}", s.updatePayment)
 	mux.HandleFunc("DELETE /payments/{id}", s.deletePayment)
-	mux.HandleFunc("GET /payments/user/{userId}", s.getPaymentsByUserID)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "payment-service"})
 	})
 
-	log.Println("payment-service listening on :8084")
-	log.Fatal(http.ListenAndServe(":8084", mux))
+	httpSrv := &http.Server{Addr: addr, Handler: mux}
+
+	go func() {
+		log.Printf("payment-service listening on %s", addr)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		log.Printf("HTTP shutdown: %v", err)
+	}
 }
 
 func (s *server) pay(w http.ResponseWriter, r *http.Request) {
 	var in payment
-	if json.NewDecoder(r.Body).Decode(&in) != nil || in.UserID == "" || in.OrderID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
+	}
+	if in.UserID == "" || in.OrderID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "userId and orderId required"})
+		return
+	}
+	if in.Amount <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "amount must be positive"})
+		return
+	}
+	if in.Currency == "" {
+		in.Currency = "USD"
 	}
 	in.ID = newID()
 	in.Status = "paid"
@@ -108,68 +128,28 @@ func (s *server) getPaymentByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
-func (s *server) getReviews(w http.ResponseWriter, r *http.Request) {
-	productID := r.URL.Query().Get("productId")
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := []review{}
-	for _, rv := range s.reviews {
-		if rv.IsDeleted {
-			continue
-		}
-		if productID != "" && rv.ProductID != productID {
-			continue
-		}
-		out = append(out, rv)
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *server) getReviewByID(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.mu.RLock()
-	rv, ok := s.reviews[id]
-	s.mu.RUnlock()
-	if !ok || rv.IsDeleted {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-	writeJSON(w, http.StatusOK, rv)
-}
-
-func (s *server) createReview(w http.ResponseWriter, r *http.Request) {
-	var in review
-	if json.NewDecoder(r.Body).Decode(&in) != nil || in.UserID == "" || in.ProductID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
-		return
-	}
-	in.ID = newID()
-	s.mu.Lock()
-	s.reviews[in.ID] = in
-	s.mu.Unlock()
-	writeJSON(w, http.StatusCreated, in)
-}
-
 func (s *server) updatePayment(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var in payment
-	if json.NewDecoder(r.Body).Decode(&in) != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
 	s.mu.Lock()
 	p, ok := s.payments[id]
-	if ok && !p.IsDeleted {
-		if in.Status != "" {
-			p.Status = in.Status
-		}
-		s.payments[id] = p
-	}
-	s.mu.Unlock()
-	if !ok {
+	if !ok || p.IsDeleted {
+		s.mu.Unlock()
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
+	if in.Status != "" {
+		p.Status = in.Status
+	}
+	if in.TransactionID != "" {
+		p.TransactionID = in.TransactionID
+	}
+	s.payments[id] = p
+	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -177,15 +157,14 @@ func (s *server) deletePayment(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.mu.Lock()
 	p, ok := s.payments[id]
-	if ok {
-		p.IsDeleted = true
-		s.payments[id] = p
-	}
-	s.mu.Unlock()
-	if !ok {
+	if !ok || p.IsDeleted {
+		s.mu.Unlock()
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
+	p.IsDeleted = true
+	s.payments[id] = p
+	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
 }
 
@@ -210,4 +189,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func newID() string {
 	return strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
+}
+
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
