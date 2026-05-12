@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	"order-service/internal/models"
 	"order-service/internal/repository"
+
+	"github.com/nats-io/nats.go"
 )
 
 type OrderService struct {
@@ -118,6 +119,86 @@ func (s *OrderService) CancelOrder(orderID string) error {
 	return nil
 }
 
+func (s *OrderService) GetOrdersByStatus(userID, status string) ([]models.Order, error) {
+	allOrders, err := s.orderRepo.GetByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []models.Order
+	for _, order := range allOrders {
+		if status == "" || order.Status == status {
+			filtered = append(filtered, order)
+		}
+	}
+
+	return filtered, nil
+}
+
+type OrderStatistics struct {
+	TotalOrders     int
+	PendingOrders   int
+	ConfirmedOrders int
+	CancelledOrders int
+	TotalRevenue    float64
+	Currency        string
+}
+
+func (s *OrderService) GetStatistics(userID string) (*OrderStatistics, error) {
+	orders, err := s.orderRepo.GetByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := &OrderStatistics{
+		Currency: "USD",
+	}
+
+	for _, order := range orders {
+		stats.TotalOrders++
+
+		switch order.Status {
+		case "pending":
+			stats.PendingOrders++
+		case "confirmed":
+			stats.ConfirmedOrders++
+			stats.TotalRevenue += order.TotalAmount
+		case "cancelled":
+			stats.CancelledOrders++
+		}
+
+		if order.Currency != "" {
+			stats.Currency = order.Currency
+		}
+	}
+
+	return stats, nil
+}
+
+func (s *OrderService) SearchOrders(userID, query string) ([]models.Order, error) {
+	allOrders, err := s.orderRepo.GetByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if query == "" {
+		return allOrders, nil
+	}
+
+	query = strings.ToLower(query)
+	var results []models.Order
+
+	for _, order := range allOrders {
+		if strings.Contains(strings.ToLower(order.ID), query) ||
+			strings.Contains(strings.ToLower(order.Status), query) ||
+			strings.Contains(fmt.Sprintf("%.2f", order.TotalAmount), query) {
+			results = append(results, order)
+		}
+	}
+
+	return results, nil
+}
+
 func (s *OrderService) publishOrderEvent(subject string, order *models.Order) {
 	if s.natsConn == nil {
 		log.Println("NATS connection not available, skipping event publish")
@@ -135,8 +216,4 @@ func (s *OrderService) publishOrderEvent(subject string, order *models.Order) {
 	} else {
 		log.Printf("Published event: %s for order: %s", subject, order.ID)
 	}
-}
-
-func generateID() string {
-	return strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
 }
