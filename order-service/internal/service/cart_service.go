@@ -2,6 +2,8 @@ package service
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"order-service/internal/models"
 	"order-service/internal/repository"
@@ -33,6 +35,10 @@ func (s *CartService) GetUserCart(userID string) ([]models.CartItem, error) {
 	return s.cartRepo.GetByUserID(userID)
 }
 
+func (s *CartService) GetCartItem(id string) (*models.CartItem, error) {
+	return s.cartRepo.GetByID(id)
+}
+
 func (s *CartService) UpdateCartItem(id string, quantity int) error {
 	item, err := s.cartRepo.GetByID(id)
 	if err != nil {
@@ -47,4 +53,12 @@ func (s *CartService) UpdateCartItem(id string, quantity int) error {
 
 func (s *CartService) RemoveFromCart(id string) error {
 	return s.cartRepo.Delete(id)
+}
+
+func (s *CartService) ClearCart(userID string) error {
+	return s.cartRepo.ClearUserCart(userID)
+}
+
+func generateID() string {
+	return strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
 }
