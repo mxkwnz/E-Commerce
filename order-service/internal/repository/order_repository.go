@@ -14,16 +14,10 @@ func NewOrderRepository() *OrderRepository {
 	return &OrderRepository{}
 }
 
-func (r *OrderRepository) Create(order *models.Order) error {
-	tx, err := database.DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
+func (r *OrderRepository) createOrderInTx(tx *sql.Tx, order *models.Order) error {
 	orderQuery := `INSERT INTO orders (id, user_id, total_amount, currency, status)
 				   VALUES ($1, $2, $3, $4, $5)`
-	_, err = tx.Exec(orderQuery, order.ID, order.UserID, order.TotalAmount, order.Currency, order.Status)
+	_, err := tx.Exec(orderQuery, order.ID, order.UserID, order.TotalAmount, order.Currency, order.Status)
 	if err != nil {
 		return err
 	}
@@ -35,6 +29,36 @@ func (r *OrderRepository) Create(order *models.Order) error {
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (r *OrderRepository) Create(order *models.Order) error {
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := r.createOrderInTx(tx, order); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (r *OrderRepository) CheckoutOrderAndClearCart(cart *CartRepository, userID string, order *models.Order) error {
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := r.createOrderInTx(tx, order); err != nil {
+		return err
+	}
+	if err := cart.ClearUserCartTx(tx, userID); err != nil {
+		return err
 	}
 
 	return tx.Commit()

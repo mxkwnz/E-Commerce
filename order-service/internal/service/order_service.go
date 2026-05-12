@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
+	"order-service/internal/currency"
 	"order-service/internal/models"
 	"order-service/internal/repository"
 
@@ -37,41 +37,38 @@ func (s *OrderService) Checkout(userID string) (*models.CheckoutResponse, error)
 		return nil, fmt.Errorf("cart is empty")
 	}
 
-	var totalAmount float64
-	currency := "USD"
-	orderItems := make([]models.OrderItem, 0, len(cartItems))
+	currencyCode, err := currency.ValidateCartUniform(cartItems)
+	if err != nil {
+		return nil, err
+	}
 
+	var orderItems []models.OrderItem
 	for _, item := range cartItems {
 		if item.Quantity <= 0 {
 			return nil, fmt.Errorf("invalid quantity for product %s", item.ProductID)
 		}
-		totalAmount += item.UnitPrice * float64(item.Quantity)
-		currency = item.Currency
-
 		orderItems = append(orderItems, models.OrderItem{
 			ID:        generateID(),
 			ProductID: item.ProductID,
 			Quantity:  item.Quantity,
 			UnitPrice: item.UnitPrice,
-			Currency:  item.Currency,
+			Currency:  currency.Normalize(item.Currency),
 		})
 	}
+
+	totalAmount := currency.SumLineTotals(cartItems)
 
 	order := &models.Order{
 		ID:          generateID(),
 		UserID:      userID,
 		TotalAmount: totalAmount,
-		Currency:    currency,
+		Currency:    currencyCode,
 		Status:      "pending",
 		Items:       orderItems,
 	}
 
-	if err := s.orderRepo.Create(order); err != nil {
-		return nil, fmt.Errorf("failed to create order: %w", err)
-	}
-
-	if err := s.cartRepo.ClearUserCart(userID); err != nil {
-		log.Printf("Warning: failed to clear cart for user %s: %v", userID, err)
+	if err := s.orderRepo.CheckoutOrderAndClearCart(s.cartRepo, userID, order); err != nil {
+		return nil, fmt.Errorf("checkout failed: %w", err)
 	}
 
 	s.publishOrderEvent("order.created", order)
@@ -80,11 +77,26 @@ func (s *OrderService) Checkout(userID string) (*models.CheckoutResponse, error)
 		OrderID:     order.ID,
 		TotalAmount: order.TotalAmount,
 		Currency:    order.Currency,
+		Status:      order.Status,
 	}, nil
 }
 
 func (s *OrderService) GetOrder(orderID string) (*models.Order, error) {
 	return s.orderRepo.GetByID(orderID)
+}
+
+func (s *OrderService) GetOrderForUser(orderID, userID string) (*models.Order, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("user_id is required")
+	}
+	order, err := s.orderRepo.GetByID(orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order.UserID != userID {
+		return nil, fmt.Errorf("order not found")
+	}
+	return order, nil
 }
 
 func (s *OrderService) GetUserOrders(userID string) ([]models.Order, error) {
@@ -105,6 +117,16 @@ func (s *OrderService) ConfirmOrder(orderID string) error {
 	return nil
 }
 
+func (s *OrderService) ConfirmOrderForUser(orderID, userID string) error {
+	if userID == "" {
+		return fmt.Errorf("user_id is required")
+	}
+	if _, err := s.GetOrderForUser(orderID, userID); err != nil {
+		return err
+	}
+	return s.ConfirmOrder(orderID)
+}
+
 func (s *OrderService) CancelOrder(orderID string) error {
 	if err := s.orderRepo.UpdateStatus(orderID, "cancelled"); err != nil {
 		return err
@@ -117,6 +139,16 @@ func (s *OrderService) CancelOrder(orderID string) error {
 
 	s.publishOrderEvent("order.cancelled", order)
 	return nil
+}
+
+func (s *OrderService) CancelOrderForUser(orderID, userID string) error {
+	if userID == "" {
+		return fmt.Errorf("user_id is required")
+	}
+	if _, err := s.GetOrderForUser(orderID, userID); err != nil {
+		return err
+	}
+	return s.CancelOrder(orderID)
 }
 
 func (s *OrderService) GetOrdersByStatus(userID, status string) ([]models.Order, error) {
@@ -154,6 +186,8 @@ func (s *OrderService) GetStatistics(userID string) (*OrderStatistics, error) {
 		Currency: "USD",
 	}
 
+	revenueCurrency := ""
+
 	for _, order := range orders {
 		stats.TotalOrders++
 
@@ -162,13 +196,26 @@ func (s *OrderService) GetStatistics(userID string) (*OrderStatistics, error) {
 			stats.PendingOrders++
 		case "confirmed":
 			stats.ConfirmedOrders++
+			c := currency.Normalize(order.Currency)
+			if revenueCurrency == "" {
+				revenueCurrency = c
+			} else if c != revenueCurrency {
+				return nil, fmt.Errorf("cannot aggregate statistics: confirmed orders use mixed currencies")
+			}
 			stats.TotalRevenue += order.TotalAmount
 		case "cancelled":
 			stats.CancelledOrders++
 		}
+	}
 
-		if order.Currency != "" {
-			stats.Currency = order.Currency
+	if revenueCurrency != "" {
+		stats.Currency = revenueCurrency
+	} else {
+		for _, order := range orders {
+			if order.Currency != "" {
+				stats.Currency = currency.Normalize(order.Currency)
+				break
+			}
 		}
 	}
 
