@@ -1,147 +1,141 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
-	"strings"
-	"sync"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
+
+	"order-service/internal/database"
+	grpcserver "order-service/internal/grpc"
+	"order-service/internal/handler"
+	"order-service/internal/repository"
+	"order-service/internal/service"
+	pb "order-service/proto"
+
+	"github.com/nats-io/nats.go"
+	"google.golang.org/grpc"
 )
 
-type cartItem struct {
-	ID        string  `json:"id"`
-	Quantity  int     `json:"quantity"`
-	UserID    string  `json:"userId"`
-	ProductID string  `json:"productId"`
-	UnitPrice float64 `json:"unitPrice"`
-	Currency  string  `json:"currency"`
-	IsDeleted bool    `json:"isDeleted"`
-}
-
-type order struct {
-	ID          string     `json:"id"`
-	UserID      string     `json:"userId"`
-	Items       []cartItem `json:"items"`
-	TotalAmount float64    `json:"totalAmount"`
-	Currency    string     `json:"currency"`
-	IsDeleted   bool       `json:"isDeleted"`
-}
-
-type server struct {
-	mu    sync.RWMutex
-	carts map[string]cartItem
-	order map[string]order
-}
-
 func main() {
-	s := &server{
-		carts: map[string]cartItem{},
-		order: map[string]order{},
-	}
-	mux := http.NewServeMux()
+	log.Println("=================================================")
+	log.Println("Starting Order Service")
+	log.Println("=================================================")
 
-	mux.HandleFunc("GET /cart-items", s.getCartByUserID)
-	mux.HandleFunc("GET /cart-items/{id}", s.getCartByID)
-	mux.HandleFunc("POST /cart-items", s.createCartItem)
-	mux.HandleFunc("PUT /cart-items/{id}", s.updateCartItem)
-	mux.HandleFunc("DELETE /cart-items/{id}", s.deleteCartItem)
+	if err := database.Connect(); err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer database.Close()
+	log.Println("✓ Database connected")
+
+	if err := database.RunMigrations(); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
+	}
+	log.Println("✓ Migrations completed")
+
+	natsURL := os.Getenv("NATS_URL")
+	if natsURL == "" {
+		natsURL = "nats://localhost:4222"
+	}
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		log.Printf("⚠ NATS connection failed: %v (continuing without NATS)", err)
+		nc = nil
+	} else {
+		defer nc.Close()
+		log.Println("✓ NATS connected")
+	}
+
+	grpcAddr := getenv("GRPC_ADDR", ":50051")
+	httpAddr := getenv("HTTP_ADDR", ":8083")
+
+	lis, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		log.Fatalf("gRPC listen %s: %v", grpcAddr, err)
+	}
+
+	grpcSrv := grpc.NewServer(
+		grpc.MaxRecvMsgSize(10*1024*1024),
+		grpc.MaxSendMsgSize(10*1024*1024),
+	)
+	pb.RegisterOrderServiceServer(grpcSrv, grpcserver.NewOrderServer(nc))
+
+	go func() {
+		log.Println("=================================================")
+		log.Printf("✓ gRPC server listening on %s", grpcAddr)
+		log.Println("=================================================")
+		if err := grpcSrv.Serve(lis); err != nil {
+			log.Printf("gRPC server stopped: %v", err)
+		}
+	}()
+
+	cartRepo := repository.NewCartRepository()
+	orderRepo := repository.NewOrderRepository()
+	cartService := service.NewCartService(cartRepo)
+	orderService := service.NewOrderService(orderRepo, cartRepo, nc)
+
+	cartHandler := handler.NewCartHandler(cartService)
+	orderHandler := handler.NewOrderHandler(orderService)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /cart-items", cartHandler.GetCart)
+	mux.HandleFunc("POST /cart-items", cartHandler.AddToCart)
+	mux.HandleFunc("PUT /cart-items/{id}", cartHandler.UpdateCartItem)
+	mux.HandleFunc("DELETE /cart-items/{id}", cartHandler.DeleteCartItem)
+
+	mux.HandleFunc("POST /orders/checkout", orderHandler.Checkout)
+	mux.HandleFunc("GET /orders", orderHandler.GetUserOrders)
+	mux.HandleFunc("GET /orders/{id}", orderHandler.GetOrder)
+	mux.HandleFunc("POST /orders/{id}/confirm", orderHandler.ConfirmOrder)
+	mux.HandleFunc("POST /orders/{id}/cancel", orderHandler.CancelOrder)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "order-service"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":    "ok",
+			"service":   "order-service",
+			"http_addr": httpAddr,
+			"grpc_addr": grpcAddr,
+			"protocols": []string{"HTTP/REST", "gRPC"},
+		})
 	})
 
-	log.Println("order-service listening on :8083")
-	log.Fatal(http.ListenAndServe(":8083", mux))
-}
+	httpSrv := &http.Server{Addr: httpAddr, Handler: mux}
 
-func (s *server) getCartByUserID(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("userId")
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := []cartItem{}
-	for _, i := range s.carts {
-		if i.IsDeleted {
-			continue
+	go func() {
+		log.Println("=================================================")
+		log.Printf("✓ HTTP server listening on %s", httpAddr)
+		log.Println("=================================================")
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("HTTP server: %v", err)
 		}
-		if userID != "" && i.UserID != userID {
-			continue
-		}
-		out = append(out, i)
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+
+	log.Println("Shutting down gracefully...")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	grpcSrv.GracefulStop()
+
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		log.Printf("HTTP shutdown: %v", err)
 	}
-	writeJSON(w, http.StatusOK, out)
+	log.Println("Shutdown complete")
 }
 
-func (s *server) getCartByID(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.mu.RLock()
-	item, ok := s.carts[id]
-	s.mu.RUnlock()
-	if !ok || item.IsDeleted {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	writeJSON(w, http.StatusOK, item)
-}
-
-func (s *server) createCartItem(w http.ResponseWriter, r *http.Request) {
-	var in cartItem
-	if json.NewDecoder(r.Body).Decode(&in) != nil || in.UserID == "" || in.ProductID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
-		return
-	}
-	in.ID = newID()
-	s.mu.Lock()
-	s.carts[in.ID] = in
-	s.mu.Unlock()
-	writeJSON(w, http.StatusCreated, in)
-}
-
-func (s *server) updateCartItem(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	var in cartItem
-	if json.NewDecoder(r.Body).Decode(&in) != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
-		return
-	}
-	s.mu.Lock()
-	item, ok := s.carts[id]
-	if ok && !item.IsDeleted {
-		if in.Quantity > 0 {
-			item.Quantity = in.Quantity
-		}
-		s.carts[id] = item
-	}
-	s.mu.Unlock()
-	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-	writeJSON(w, http.StatusOK, item)
-}
-
-func (s *server) deleteCartItem(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.mu.Lock()
-	item, ok := s.carts[id]
-	if ok {
-		item.IsDeleted = true
-		s.carts[id] = item
-	}
-	s.mu.Unlock()
-	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func newID() string {
-	return strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
+	return def
 }
