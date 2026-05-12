@@ -76,7 +76,13 @@ func (r *CartRepository) Delete(id string) error {
 }
 
 func (r *CartRepository) ClearUserCart(userID string) error {
-	query := `UPDATE cart_items SET is_deleted = true WHERE user_id = $1`
+	query := `UPDATE cart_items SET is_deleted = true WHERE user_id = $1 AND is_deleted = false`
 	_, err := database.DB.Exec(query, userID)
+	return err
+}
+
+func (r *CartRepository) ClearUserCartTx(tx *sql.Tx, userID string) error {
+	query := `UPDATE cart_items SET is_deleted = true WHERE user_id = $1 AND is_deleted = false`
+	_, err := tx.Exec(query, userID)
 	return err
 }

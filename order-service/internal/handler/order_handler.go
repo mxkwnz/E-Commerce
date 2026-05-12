@@ -34,7 +34,12 @@ func (h *OrderHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 
 func (h *OrderHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("id")
-	order, err := h.orderService.GetOrder(orderID)
+	userID := r.URL.Query().Get("userId")
+	if userID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "userId required"})
+		return
+	}
+	order, err := h.orderService.GetOrderForUser(orderID, userID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "order not found"})
 		return
@@ -59,7 +64,12 @@ func (h *OrderHandler) GetUserOrders(w http.ResponseWriter, r *http.Request) {
 
 func (h *OrderHandler) ConfirmOrder(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("id")
-	if err := h.orderService.ConfirmOrder(orderID); err != nil {
+	userID := r.URL.Query().Get("userId")
+	if userID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "userId required"})
+		return
+	}
+	if err := h.orderService.ConfirmOrderForUser(orderID, userID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -68,7 +78,12 @@ func (h *OrderHandler) ConfirmOrder(w http.ResponseWriter, r *http.Request) {
 
 func (h *OrderHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("id")
-	if err := h.orderService.CancelOrder(orderID); err != nil {
+	userID := r.URL.Query().Get("userId")
+	if userID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "userId required"})
+		return
+	}
+	if err := h.orderService.CancelOrderForUser(orderID, userID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

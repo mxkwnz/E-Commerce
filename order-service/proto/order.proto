@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package order;
 
-option go_package = "order-service/proto";
+option go_package = "order-service/proto;proto";
 
 import "google/protobuf/timestamp.proto";
 
@@ -57,6 +57,7 @@ message CartResponse {
 
 message GetCartItemRequest {
   string id = 1;
+  string user_id = 2;
 }
 
 message CartItemResponse {
@@ -66,10 +67,12 @@ message CartItemResponse {
 message UpdateCartItemRequest {
   string id = 1;
   int32 quantity = 2;
+  string user_id = 3;
 }
 
 message RemoveFromCartRequest {
   string id = 1;
+  string user_id = 2;
 }
 
 message RemoveFromCartResponse {
@@ -120,6 +123,7 @@ message CheckoutResponse {
 
 message GetOrderRequest {
   string id = 1;
+  string user_id = 2;
 }
 
 message OrderResponse {
@@ -141,11 +145,13 @@ message ListOrdersResponse {
 
 message ConfirmOrderRequest {
   string id = 1;
+  string user_id = 2;
 }
 
 message CancelOrderRequest {
   string id = 1;
   string reason = 2;
+  string user_id = 3;
 }
 
 message OrderStatusResponse {

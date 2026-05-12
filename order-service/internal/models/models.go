@@ -44,4 +44,5 @@ type CheckoutResponse struct {
 	OrderID     string  `json:"orderId"`
 	TotalAmount float64 `json:"totalAmount"`
 	Currency    string  `json:"currency"`
+	Status      string  `json:"status"`
 }
