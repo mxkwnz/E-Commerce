@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package payment;
+
+option go_package = "payment-service/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+
+service PaymentService {
+  rpc CreatePayment(CreatePaymentRequest) returns (PaymentResponse);
+  rpc GetPayment(GetPaymentRequest) returns (PaymentResponse);
+  rpc ListUserPayments(ListUserPaymentsRequest) returns (ListPaymentsResponse);
+  rpc UpdatePaymentStatus(UpdatePaymentStatusRequest) returns (PaymentResponse);
+}
+
+message Payment {
+  string id = 1;
+  string user_id = 2;
+  string order_id = 3;
+  double amount = 4;
+  string currency = 5;
+  string status = 6;
+  string payment_method = 7;
+  string transaction_id = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message CreatePaymentRequest {
+  string user_id = 1;
+  string order_id = 2;
+  double amount = 3;
+  string currency = 4;
+  string payment_method = 5;
+}
+
+message GetPaymentRequest {
+  string id = 1;
+}
+
+message PaymentResponse {
+  Payment payment = 1;
+}
+
+message ListUserPaymentsRequest {
+  string user_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ListPaymentsResponse {
+  repeated Payment payments = 1;
+  int32 total_count = 2;
+}
+
+message UpdatePaymentStatusRequest {
+  string id = 1;
+  string status = 2;
+  string transaction_id = 3;
+}
