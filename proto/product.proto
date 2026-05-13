@@ -1,0 +1,172 @@
+syntax = "proto3";
+
+package product;
+
+option go_package = "github.com/final-ap2-course2/product-service/proto";
+
+import "google/protobuf/timestamp.proto";
+
+service ProductService {
+  //prod-serv
+  rpc CreateProduct(CreateProductRequest) returns (ProductResponse);
+  rpc GetProduct(GetProductRequest) returns (ProductResponse);
+  rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
+  rpc UpdateProduct(UpdateProductRequest) returns (ProductResponse);
+  rpc DeleteProduct(DeleteProductRequest) returns (DeleteProductResponse);
+
+  //inventory
+  rpc GetInventory(GetInventoryRequest) returns (InventoryResponse);
+  rpc UpdateInventory(UpdateInventoryRequest) returns (InventoryResponse);
+  rpc ReserveStock(ReserveStockRequest) returns (ReserveStockResponse);
+  rpc ReleaseStock(ReleaseStockRequest) returns (ReleaseStockResponse);
+
+  //prod-query
+  rpc SearchProducts(SearchProductsRequest) returns (ListProductsResponse);
+  rpc GetProductsByBrand(GetProductsByBrandRequest) returns (ListProductsResponse);
+  rpc GetProductsByCategory(GetProductsByCategoryRequest) returns (ListProductsResponse);
+  rpc GetProductStatistics(GetProductStatisticsRequest) returns (ProductStatisticsResponse);
+}
+
+//prod-msg
+message Product {
+  string id = 1;
+  string name = 2;
+  string photo_url = 3;
+  string description = 4;
+  string brand = 5;
+  double price = 6;
+  string currency = 7;
+  string category = 8;
+  int32 stock = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message CreateProductRequest {
+  string name = 1;
+  string photo_url = 2;
+  string description = 3;
+  string brand = 4;
+  double price = 5;
+  string currency = 6;
+  string category = 7;
+  int32 initial_stock = 8;
+}
+
+message GetProductRequest {
+  string id = 1;
+}
+
+message ProductResponse {
+  Product product = 1;
+}
+
+message ListProductsRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message ListProductsResponse {
+  repeated Product products = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+message UpdateProductRequest {
+  string id = 1;
+  string name = 2;
+  string photo_url = 3;
+  string description = 4;
+  string brand = 5;
+  double price = 6;
+  string currency = 7;
+  string category = 8;
+}
+
+message DeleteProductRequest {
+  string id = 1;
+}
+
+message DeleteProductResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+//inv-msg
+message Inventory {
+  string id = 1;
+  string product_id = 2;
+  int32 quantity = 3;
+  int32 reserved = 4;
+  int32 available = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message GetInventoryRequest {
+  string product_id = 1;
+}
+
+message InventoryResponse {
+  Inventory inventory = 1;
+}
+
+message UpdateInventoryRequest {
+  string product_id = 1;
+  int32 quantity = 2;
+}
+
+message ReserveStockRequest {
+  string product_id = 1;
+  int32 amount = 2;
+}
+
+message ReserveStockResponse {
+  bool success = 1;
+  string message = 2;
+  int32 reserved_amount = 3;
+}
+
+message ReleaseStockRequest {
+  string product_id = 1;
+  int32 amount = 2;
+}
+
+message ReleaseStockResponse {
+  bool success = 1;
+  string message = 2;
+  int32 released_amount = 3;
+}
+
+//query-msg
+message SearchProductsRequest {
+  string query = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message GetProductsByBrandRequest {
+  string brand = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message GetProductsByCategoryRequest {
+  string category = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ProductStatisticsResponse {
+  int32 total_products = 1;
+  int32 total_brands = 2;
+  int32 total_categories = 3;
+  int32 low_stock_products = 4;
+  int32 out_of_stock_products = 5;
+  double average_price = 6;
+  string currency = 7;
+}
+
+message GetProductStatisticsRequest {
+}

@@ -3,166 +3,196 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
-	"strings"
-	"sync"
-	"time"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/final-ap2-course2/product-service/internal/cache"
+	"github.com/final-ap2-course2/product-service/internal/database"
+	grpcserver "github.com/final-ap2-course2/product-service/internal/grpc"
+	"github.com/final-ap2-course2/product-service/internal/models"
+	"github.com/final-ap2-course2/product-service/internal/repository"
+	"github.com/final-ap2-course2/product-service/internal/service"
+	pb "github.com/final-ap2-course2/product-service/proto"
+
+	"google.golang.org/grpc"
 )
 
-type product struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	PhotoURL    string  `json:"photoUrl"`
-	Description string  `json:"description"`
-	Brand       string  `json:"brand"`
-	Price       float64 `json:"price"`
-	Currency    string  `json:"currency"`
-	IsDeleted   bool    `json:"isDeleted"`
-}
-
-type inventory struct {
-	ID        string `json:"id"`
-	ProductID string `json:"productId"`
-	Quantity  int    `json:"quantity"`
-	IsDeleted bool   `json:"isDeleted"`
-}
-
-type server struct {
-	mu          sync.RWMutex
-	products    map[string]product
-	inventories map[string]inventory
-}
-
 func main() {
-	s := &server{
-		products:    map[string]product{},
-		inventories: map[string]inventory{},
+	log.Println("Starting Product Service")
+
+	if err := database.Connect(); err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
+	defer database.Close()
+
+	if err := database.RunMigrations(); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
+	}
+
+	if err := cache.Connect(); err != nil {
+		log.Printf("⚠ Redis connection failed: %v (continuing without cache)", err)
+	} else {
+		defer cache.Close()
+	}
+
+	go startGRPCServer()
+	startHTTPServer()
+}
+
+func startGRPCServer() {
+	lis, err := net.Listen("tcp", ":50052")
+	if err != nil {
+		log.Fatalf("Failed to listen on port 50052: %v", err)
+	}
+
+	grpcServer := grpc.NewServer(
+		grpc.MaxRecvMsgSize(10*1024*1024),
+		grpc.MaxSendMsgSize(10*1024*1024),
+	)
+
+	productServer := grpcserver.NewProductServer()
+	pb.RegisterProductServiceServer(grpcServer, productServer)
+
+	log.Println("✓ gRPC server listening on :50052")
+
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Fatalf("Failed to serve gRPC: %v", err)
+	}
+}
+
+func startHTTPServer() {
+	productRepo := repository.NewProductRepository()
+	invRepo := repository.NewInventoryRepository()
+	productService := service.NewProductService(productRepo, invRepo)
+
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /products", s.getProducts)
-	mux.HandleFunc("GET /products/{id}", s.getProductByID)
-	mux.HandleFunc("POST /products", s.createProduct)
-	mux.HandleFunc("PUT /products/{id}", s.updateProduct)
-	mux.HandleFunc("DELETE /products/{id}", s.deleteProduct)
+	mux.HandleFunc("GET /products", func(w http.ResponseWriter, r *http.Request) {
+		brand := r.URL.Query().Get("brand")
+		category := r.URL.Query().Get("category")
+		query := r.URL.Query().Get("q")
 
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "product-service"})
+		var products []models.Product
+		var err error
+
+		if query != "" {
+			products, _, err = productService.SearchProducts(query, 1, 100)
+		} else if brand != "" {
+			products, _, err = productService.GetProductsByBrand(brand, 1, 100)
+		} else if category != "" {
+			products, _, err = productService.GetProductsByCategory(category, 1, 100)
+		} else {
+			products, _, err = productService.ListProducts(1, 100)
+		}
+
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, products)
 	})
 
-	log.Println("product-service listening on :8082")
-	log.Fatal(http.ListenAndServe(":8082", mux))
+	mux.HandleFunc("GET /products/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		product, err := productService.GetProduct(id)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, product)
+	})
+
+	mux.HandleFunc("POST /products", func(w http.ResponseWriter, r *http.Request) {
+		var product models.Product
+		if err := json.NewDecoder(r.Body).Decode(&product); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		if err := productService.CreateProduct(&product); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, product)
+	})
+
+	mux.HandleFunc("PUT /products/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var updates models.Product
+		if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		if err := productService.UpdateProduct(id, &updates); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		product, _ := productService.GetProduct(id)
+		writeJSON(w, http.StatusOK, product)
+	})
+
+	mux.HandleFunc("DELETE /products/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if err := productService.DeleteProduct(id); err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+	})
+
+	mux.HandleFunc("GET /inventory/{productId}", func(w http.ResponseWriter, r *http.Request) {
+		productID := r.PathValue("productId")
+		inventory, err := productService.GetInventory(productID)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, inventory)
+	})
+
+	mux.HandleFunc("PUT /inventory/{productId}", func(w http.ResponseWriter, r *http.Request) {
+		productID := r.PathValue("productId")
+		var req struct {
+			Quantity int `json:"quantity"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		if err := productService.UpdateInventory(productID, req.Quantity); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		inventory, _ := productService.GetInventory(productID)
+		writeJSON(w, http.StatusOK, inventory)
+	})
+
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":  "ok",
+			"service": "product-service",
+			"ports":   map[string]string{"http": "8082", "grpc": "50052"},
+		})
+	})
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		log.Println("✓ HTTP server listening on :8082")
+		if err := http.ListenAndServe(":8082", mux); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	<-stop
+	log.Println("Shutting down gracefully...")
 }
 
-func (s *server) getProducts(w http.ResponseWriter, r *http.Request) {
-	brand := r.URL.Query().Get("brand")
-	query := strings.ToLower(r.URL.Query().Get("q"))
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := []product{}
-	for _, p := range s.products {
-		if p.IsDeleted {
-			continue
-		}
-		if brand != "" && !strings.EqualFold(p.Brand, brand) {
-			continue
-		}
-		if query != "" && !strings.Contains(strings.ToLower(p.Name+" "+p.Description), query) {
-			continue
-		}
-		out = append(out, p)
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *server) getProductByID(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.mu.RLock()
-	p, ok := s.products[id]
-	s.mu.RUnlock()
-	if !ok || p.IsDeleted {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-	writeJSON(w, http.StatusOK, p)
-}
-
-func (s *server) createProduct(w http.ResponseWriter, r *http.Request) {
-	var in product
-	if json.NewDecoder(r.Body).Decode(&in) != nil || in.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
-		return
-	}
-	in.ID = newID()
-	if in.Currency == "" {
-		in.Currency = "USD"
-	}
-	s.mu.Lock()
-	s.products[in.ID] = in
-	s.mu.Unlock()
-	writeJSON(w, http.StatusCreated, in)
-}
-
-func (s *server) updateProduct(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	var in product
-	if json.NewDecoder(r.Body).Decode(&in) != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
-		return
-	}
-	s.mu.Lock()
-	p, ok := s.products[id]
-	if ok && !p.IsDeleted {
-		if in.Name != "" {
-			p.Name = in.Name
-		}
-		if in.PhotoURL != "" {
-			p.PhotoURL = in.PhotoURL
-		}
-		if in.Description != "" {
-			p.Description = in.Description
-		}
-		if in.Brand != "" {
-			p.Brand = in.Brand
-		}
-		if in.Price > 0 {
-			p.Price = in.Price
-		}
-		if in.Currency != "" {
-			p.Currency = in.Currency
-		}
-		s.products[id] = p
-	}
-	s.mu.Unlock()
-	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-	writeJSON(w, http.StatusOK, p)
-}
-
-func (s *server) deleteProduct(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.mu.Lock()
-	p, ok := s.products[id]
-	if ok {
-		p.IsDeleted = true
-		s.products[id] = p
-	}
-	s.mu.Unlock()
-	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func newID() string {
-	return strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
+	json.NewEncoder(w).Encode(v)
 }
