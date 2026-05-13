@@ -1,0 +1,155 @@
+syntax = "proto3";
+
+package auth;
+
+option go_package = "github.com/final-ap2-course2/auth-service/proto";
+
+import "google/protobuf/timestamp.proto";
+
+service AuthService {
+  rpc Register(RegisterRequest) returns (AuthResponse);
+  rpc Login(LoginRequest) returns (AuthResponse);
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+
+  rpc GetUser(GetUserRequest) returns (UserResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc UpdateUser(UpdateUserRequest) returns (UserResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+
+  rpc ForgotPassword(ForgotPasswordRequest) returns (ForgotPasswordResponse);
+  rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);
+  rpc VerifyResetToken(VerifyResetTokenRequest) returns (VerifyResetTokenResponse);
+}
+
+message User {
+  string id = 1;
+  string username = 2;
+  string email = 3;
+  string first_name = 4;
+  string last_name = 5;
+  string phone_number = 6;
+  double balance = 7;
+  string role = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message RegisterRequest {
+  string email = 1;
+  string password = 2;
+  string username = 3;
+  string first_name = 4;
+  string last_name = 5;
+  string phone_number = 6;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message AuthResponse {
+  string user_id = 1;
+  string access_token = 2;
+  User user = 3;
+}
+
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message ValidateTokenResponse {
+  bool valid = 1;
+  string user_id = 2;
+  User user = 3;
+}
+
+message LogoutRequest {
+  string token = 1;
+}
+
+message LogoutResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message UserResponse {
+  User user = 1;
+}
+
+message ListUsersRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  string role = 3;
+}
+
+message ListUsersResponse {
+  repeated User users = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+message UpdateUserRequest {
+  string id = 1;
+  string username = 2;
+  string first_name = 3;
+  string last_name = 4;
+  string phone_number = 5;
+}
+
+message DeleteUserRequest {
+  string id = 1;
+}
+
+message DeleteUserResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ChangePasswordRequest {
+  string user_id = 1;
+  string old_password = 2;
+  string new_password = 3;
+}
+
+message ChangePasswordResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ForgotPasswordRequest {
+  string email = 1;
+}
+
+message ForgotPasswordResponse {
+  bool success = 1;
+  string message = 2;
+  string reset_token = 3;
+}
+
+message ResetPasswordRequest {
+  string token = 1;
+  string new_password = 2;
+}
+
+message ResetPasswordResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message VerifyResetTokenRequest {
+  string token = 1;
+}
+
+message VerifyResetTokenResponse {
+  bool valid = 1;
+  string user_id = 2;
+  string message = 3;
+}
