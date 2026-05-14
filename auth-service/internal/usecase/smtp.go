@@ -1,130 +1,166 @@
 package usecase
 
 import (
-	"bytes"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"net"
 	"net/smtp"
 	"os"
 	"strings"
 )
 
-func smtpDialAddr() string {
-	host := strings.TrimSpace(os.Getenv("SMTP_HOST"))
-	if host == "" {
-		return ""
-	}
-	port := strings.TrimSpace(os.Getenv("SMTP_PORT"))
-	if port == "" {
-		port = "587"
-	}
-	return net.JoinHostPort(host, port)
+type SMTPConfig struct {
+	Host     string
+	Port     string
+	Username string
+	Password string
+	From     string
 }
 
-func smtpPlainAuth(host string) smtp.Auth {
-	user := os.Getenv("SMTP_USER")
-	pass := os.Getenv("SMTP_PASSWORD")
-	if strings.TrimSpace(user) == "" && strings.TrimSpace(pass) == "" {
+func loadSMTPConfig() SMTPConfig {
+	host := getEnv("SMTP_HOST", "smtp.gmail.com")
+	return SMTPConfig{
+		Host:     host,
+		Port:     getEnv("SMTP_PORT", "587"),
+		Username: getEnv("SMTP_USERNAME", ""),
+		Password: getEnv("SMTP_PASSWORD", ""),
+		From:     getEnv("SMTP_FROM", getEnv("SMTP_USERNAME", "noreply@example.com")),
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func sendEmail(to, subject, body string) error {
+	cfg := loadSMTPConfig()
+
+	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
+		log.Printf("[SMTP] credentials not configured — logging email instead")
+		log.Printf("[SMTP] TO: %s | SUBJECT: %s | BODY: %s", to, subject, body)
 		return nil
 	}
-	return smtp.PlainAuth("", user, pass, host)
-}
 
-func sendMail(host, addr, from string, to []string, msg []byte) error {
-	c, err := smtp.Dial(addr)
+	addr := net.JoinHostPort(cfg.Host, cfg.Port)
+	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
+
+	headers := map[string]string{
+		"From":          cfg.From,
+		"To":            to,
+		"Subject":       subject,
+		"MIME-Version":  "1.0",
+		"Content-Type":  "text/plain; charset=UTF-8",
+	}
+	var sb strings.Builder
+	for k, v := range headers {
+		sb.WriteString(k + ": " + v + "\r\n")
+	}
+	sb.WriteString("\r\n" + body)
+	msg := []byte(sb.String())
+
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("smtp dial: %w", err)
 	}
-	defer c.Close()
-	helo := strings.TrimSpace(os.Getenv("SMTP_HELO_DOMAIN"))
-	if helo == "" {
-		helo = "localhost"
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, cfg.Host)
+	if err != nil {
+		return fmt.Errorf("smtp client: %w", err)
 	}
-	if err := c.Hello(helo); err != nil {
-		return err
-	}
-	if ok, _ := c.Extension("STARTTLS"); ok {
-		cfg := &tls.Config{ServerName: host}
+	defer client.Close()
+
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		tlsCfg := &tls.Config{ServerName: cfg.Host}
 		if os.Getenv("SMTP_TLS_INSECURE") == "true" {
-			cfg.InsecureSkipVerify = true
+			tlsCfg.InsecureSkipVerify = true
 		}
-		if err := c.StartTLS(cfg); err != nil {
-			return err
-		}
-	}
-	if a := smtpPlainAuth(host); a != nil {
-		if err := c.Auth(a); err != nil {
-			return err
+		if err := client.StartTLS(tlsCfg); err != nil {
+			return fmt.Errorf("smtp starttls: %w", err)
 		}
 	}
-	if err := c.Mail(from); err != nil {
-		return err
-	}
-	for _, rcpt := range to {
-		if err := c.Rcpt(rcpt); err != nil {
-			return err
-		}
-	}
-	w, err := c.Data()
-	if err != nil {
-		return err
-	}
-	if _, err := w.Write(msg); err != nil {
-		return err
-	}
-	return w.Close()
-}
 
-func sendPlainEmail(to []string, subject, body string) error {
-	addr := smtpDialAddr()
-	if addr == "" {
-		return nil
+	if err := client.Auth(auth); err != nil {
+		return fmt.Errorf("smtp auth: %w", err)
 	}
-	from := strings.TrimSpace(os.Getenv("SMTP_FROM"))
-	if from == "" {
-		from = "noreply@localhost"
+	if err := client.Mail(cfg.From); err != nil {
+		return fmt.Errorf("smtp mail from: %w", err)
 	}
-	host, _, err := net.SplitHostPort(addr)
+	if err := client.Rcpt(to); err != nil {
+		return fmt.Errorf("smtp rcpt to: %w", err)
+	}
+	wc, err := client.Data()
 	if err != nil {
-		return err
+		return fmt.Errorf("smtp data: %w", err)
 	}
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "From: %s\r\n", from)
-	for _, rcpt := range to {
-		fmt.Fprintf(&buf, "To: %s\r\n", rcpt)
+	defer wc.Close()
+	if _, err := wc.Write(msg); err != nil {
+		return fmt.Errorf("smtp write: %w", err)
 	}
-	fmt.Fprintf(&buf, "Subject: %s\r\n", subject)
-	fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
-	fmt.Fprintf(&buf, "Content-Type: text/plain; charset=UTF-8\r\n")
-	fmt.Fprintf(&buf, "\r\n%s\r\n", body)
-	return sendMail(host, addr, from, to, buf.Bytes())
-}
 
-func resetLink(token string) string {
-	base := strings.TrimSpace(os.Getenv("PASSWORD_RESET_BASE_URL"))
-	if base == "" {
-		base = "https://yourapp.com/reset-password"
-	}
-	base = strings.TrimSuffix(base, "/")
-	return base + "?token=" + token
+	log.Printf("[SMTP] email sent to %s — subject: %s", to, subject)
+	return nil
 }
 
 func SendResetEmail(email, resetToken string) error {
-	body := fmt.Sprintf("Use this link to reset your password:\n\n%s\n\nIf you did not request a reset, ignore this message.\n", resetLink(resetToken))
-	return sendPlainEmail([]string{email}, "Password reset", body)
+	appURL := strings.TrimSuffix(getEnv("APP_URL", "https://yourapp.com"), "/")
+	resetLink := fmt.Sprintf("%s/reset-password?token=%s", appURL, resetToken)
+
+	subject := "Password Reset Request"
+	body := fmt.Sprintf(`Hello,
+
+You requested a password reset for your account.
+
+Click the link below to reset your password (valid for 1 hour):
+%s
+
+If you did not request this, please ignore this email.
+
+— The E-Commerce Team
+`, resetLink)
+
+	if err := sendEmail(email, subject, body); err != nil {
+		log.Printf("[SMTP] SendResetEmail failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func SendWelcomeEmail(email, username string) error {
-	name := strings.TrimSpace(username)
-	if name == "" {
-		name = "there"
+	subject := "Welcome to E-Commerce!"
+	body := fmt.Sprintf(`Hi %s,
+
+Your account has been created successfully. Welcome aboard!
+
+You can now log in and start shopping.
+
+— The E-Commerce Team
+`, username)
+
+	if err := sendEmail(email, subject, body); err != nil {
+		log.Printf("[SMTP] SendWelcomeEmail failed: %v", err)
+		return err
 	}
-	body := fmt.Sprintf("Hello %s,\n\nYour account was created successfully.\n", name)
-	return sendPlainEmail([]string{email}, "Welcome", body)
+	return nil
 }
 
 func SendPasswordChangedEmail(email string) error {
-	body := "Your password was changed. If this was not you, contact support immediately.\n"
-	return sendPlainEmail([]string{email}, "Password changed", body)
+	subject := "Your Password Was Changed"
+	body := `Hello,
+
+Your password has been changed successfully.
+
+If you did not make this change, please contact support immediately.
+
+— The E-Commerce Team
+`
+	if err := sendEmail(email, subject, body); err != nil {
+		log.Printf("[SMTP] SendPasswordChangedEmail failed: %v", err)
+		return err
+	}
+	return nil
 }

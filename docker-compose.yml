@@ -55,6 +55,8 @@ services:
     image: nats:2.10
     ports:
       - "4222:4222"
+      - "8222:8222"
+    command: [ "--http_port", "8222" ]
 
   postgres-payment:
     image: postgres:16
@@ -72,6 +74,7 @@ services:
 
   mailhog:
     image: mailhog/mailhog:v1.0.1
+    platform: linux/amd64
     ports:
       - "1025:1025"
       - "8025:8025"
@@ -120,6 +123,8 @@ services:
     depends_on:
       postgres-auth:
         condition: service_healthy
+      nats:
+        condition: service_started
       mailhog:
         condition: service_started
     ports:
@@ -127,7 +132,10 @@ services:
       - "50053:50053"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres-auth:5432/auth_db?sslmode=disable
-      SMTP_HOST: mailhog
-      SMTP_PORT: "1025"
-      SMTP_FROM: noreply@ecommerce.local
-      PASSWORD_RESET_BASE_URL: http://localhost:8081/reset-password
+      NATS_URL: nats://nats:4222
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@example.com}
+      APP_URL: ${APP_URL:-http://localhost:8081}

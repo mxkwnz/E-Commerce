@@ -9,6 +9,8 @@ import (
 	"github.com/final-ap2-course2/auth-service/internal/repository"
 	"github.com/final-ap2-course2/auth-service/internal/service"
 	pb "github.com/final-ap2-course2/auth-service/proto"
+
+	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -205,12 +207,22 @@ func (s *AuthServer) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) 
 		return nil, fmt.Errorf("user id is required")
 	}
 
+	user, err := s.userService.GetUser(req.Id)
+	if err != nil {
+		return &pb.DeleteUserResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
 	if err := s.userService.DeleteUser(req.Id); err != nil {
 		return &pb.DeleteUserResponse{
 			Success: false,
 			Message: err.Error(),
 		}, nil
 	}
+
+	s.authService.NotifyUserDeleted(user.ID, user.Email, user.Username, user.Role)
 
 	return &pb.DeleteUserResponse{
 		Success: true,
@@ -297,6 +309,12 @@ func (s *AuthServer) VerifyResetToken(ctx context.Context, req *pb.VerifyResetTo
 		UserId:  userID,
 		Message: "Token is valid",
 	}, nil
+}
+
+func (s *AuthServer) SetNATS(nc *nats.Conn) {
+	if nc != nil {
+		s.authService.SetPublisher(nc)
+	}
 }
 
 func convertUserToProto(user *models.User) *pb.User {

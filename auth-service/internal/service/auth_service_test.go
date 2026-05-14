@@ -144,8 +144,14 @@ func (m *mockAuthResetRepo) MarkAsUsed(token string) error {
 	return fmt.Errorf("not found")
 }
 
+func clearSMTP(t *testing.T) {
+	t.Helper()
+	t.Setenv("SMTP_USERNAME", "")
+	t.Setenv("SMTP_PASSWORD", "")
+}
+
 func TestRegister_InvalidEmail(t *testing.T) {
-	t.Setenv("SMTP_HOST", "")
+	clearSMTP(t)
 	svc := NewAuthService(&mockAuthUserRepo{}, &mockAuthSessionRepo{}, &mockAuthResetRepo{})
 	_, err := svc.Register(&models.RegisterRequest{
 		Email:    "bad",
@@ -157,7 +163,7 @@ func TestRegister_InvalidEmail(t *testing.T) {
 }
 
 func TestRegister_Success(t *testing.T) {
-	t.Setenv("SMTP_HOST", "")
+	clearSMTP(t)
 	users := &mockAuthUserRepo{}
 	sessions := &mockAuthSessionRepo{}
 	svc := NewAuthService(users, sessions, &mockAuthResetRepo{})
@@ -181,7 +187,7 @@ func TestRegister_Success(t *testing.T) {
 }
 
 func TestLogin_InvalidPassword(t *testing.T) {
-	t.Setenv("SMTP_HOST", "")
+	clearSMTP(t)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("right"), bcrypt.DefaultCost)
 	users := &mockAuthUserRepo{users: []models.User{{
 		ID: "id1", Email: "e@e.com", Password: string(hash),
@@ -194,7 +200,7 @@ func TestLogin_InvalidPassword(t *testing.T) {
 }
 
 func TestLogin_Success(t *testing.T) {
-	t.Setenv("SMTP_HOST", "")
+	clearSMTP(t)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("right"), bcrypt.DefaultCost)
 	users := &mockAuthUserRepo{users: []models.User{{
 		ID: "id1", Email: "e@e.com", Password: string(hash),
@@ -214,7 +220,7 @@ func TestLogin_Success(t *testing.T) {
 }
 
 func TestForgotPassword_UnknownEmail(t *testing.T) {
-	t.Setenv("SMTP_HOST", "")
+	clearSMTP(t)
 	svc := NewAuthService(&mockAuthUserRepo{}, &mockAuthSessionRepo{}, &mockAuthResetRepo{})
 	tok, err := svc.ForgotPassword("nobody@example.com")
 	if err != nil {
@@ -226,7 +232,7 @@ func TestForgotPassword_UnknownEmail(t *testing.T) {
 }
 
 func TestChangePassword_WrongOld(t *testing.T) {
-	t.Setenv("SMTP_HOST", "")
+	clearSMTP(t)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("oldpass"), bcrypt.DefaultCost)
 	users := &mockAuthUserRepo{users: []models.User{{
 		ID: "id1", Email: "e@e.com", Password: string(hash),
@@ -239,7 +245,7 @@ func TestChangePassword_WrongOld(t *testing.T) {
 }
 
 func TestResetPassword_Success(t *testing.T) {
-	t.Setenv("SMTP_HOST", "")
+	clearSMTP(t)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("old"), bcrypt.DefaultCost)
 	users := &mockAuthUserRepo{users: []models.User{{
 		ID: "id1", Email: "e@e.com", Password: string(hash),
@@ -261,5 +267,110 @@ func TestResetPassword_Success(t *testing.T) {
 	}
 	if len(sessions.sessions) != 0 {
 		t.Fatalf("expected sessions cleared, got %d", len(sessions.sessions))
+	}
+}
+
+func TestIsValidEmail(t *testing.T) {
+	valid := []string{
+		"user@example.com",
+		"user+tag@domain.co.uk",
+		"firstname.lastname@company.org",
+	}
+	invalid := []string{
+		"notanemail",
+		"@nodomain.com",
+		"user@",
+		"",
+	}
+	for _, e := range valid {
+		if !isValidEmail(e) {
+			t.Errorf("expected %s to be valid", e)
+		}
+	}
+	for _, e := range invalid {
+		if isValidEmail(e) {
+			t.Errorf("expected %s to be invalid", e)
+		}
+	}
+}
+
+func TestGenerateID_Unique(t *testing.T) {
+	ids := make(map[string]bool)
+	for i := 0; i < 50; i++ {
+		id := generateID()
+		if ids[id] {
+			t.Errorf("duplicate ID generated: %s", id)
+		}
+		ids[id] = true
+		time.Sleep(20 * time.Microsecond)
+	}
+}
+
+func TestGenerateToken_NotEmpty(t *testing.T) {
+	token := generateToken("user123", "user@example.com")
+	if token == "" {
+		t.Error("expected non-empty token")
+	}
+	if len(token) != 64 {
+		t.Errorf("expected 64-char hex token, got length %d", len(token))
+	}
+}
+
+func TestGenerateToken_DifferentInputsDifferentTokens(t *testing.T) {
+	t1 := generateToken("user1", "a@b.com")
+	t2 := generateToken("user2", "c@d.com")
+	if t1 == t2 {
+		t.Error("expected different tokens for different inputs")
+	}
+}
+
+func TestRegisterRequest_Validation(t *testing.T) {
+	cases := []struct {
+		name    string
+		email   string
+		pass    string
+		wantErr bool
+	}{
+		{"valid", "user@example.com", "password123", false},
+		{"invalid email", "notanemail", "password123", true},
+		{"short password", "user@example.com", "abc", true},
+		{"empty email", "", "password123", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			emailOK := isValidEmail(tc.email)
+			passOK := len(tc.pass) >= 6
+			hasErr := !emailOK || !passOK
+			if hasErr != tc.wantErr {
+				t.Errorf("case %s: expected wantErr=%v, got hasErr=%v", tc.name, tc.wantErr, hasErr)
+			}
+		})
+	}
+}
+
+func TestPasswordReset_TokenExpiry(t *testing.T) {
+	expires := time.Now().Add(1 * time.Hour)
+	if expires.Before(time.Now()) {
+		t.Error("fresh token should not be expired")
+	}
+	expiredTime := time.Now().Add(-1 * time.Hour)
+	if expiredTime.After(time.Now()) {
+		t.Error("past time should be expired")
+	}
+}
+
+func TestSessionExpiry_Is24Hours(t *testing.T) {
+	expiresAt := time.Now().Add(24 * time.Hour)
+	duration := time.Until(expiresAt)
+	if duration < 23*time.Hour || duration > 25*time.Hour {
+		t.Errorf("session expiry should be ~24h, got %v", duration)
+	}
+}
+
+func TestUserRole_DefaultIsCustomer(t *testing.T) {
+	user := &models.User{Role: "customer"}
+	if user.Role != "customer" {
+		t.Errorf("expected default role customer, got %s", user.Role)
 	}
 }

@@ -4,12 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/final-ap2-course2/auth-service/internal/messaging"
 	"github.com/final-ap2-course2/auth-service/internal/models"
 	"github.com/final-ap2-course2/auth-service/internal/usecase"
+	"github.com/nats-io/nats.go"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -39,6 +42,7 @@ type AuthService struct {
 	userRepo       authUserRepository
 	sessionRepo    authSessionRepository
 	resetTokenRepo authResetTokenRepository
+	publisher      *messaging.Publisher
 }
 
 func NewAuthService(userRepo authUserRepository, sessionRepo authSessionRepository, resetTokenRepo authResetTokenRepository) *AuthService {
@@ -47,6 +51,24 @@ func NewAuthService(userRepo authUserRepository, sessionRepo authSessionReposito
 		sessionRepo:    sessionRepo,
 		resetTokenRepo: resetTokenRepo,
 	}
+}
+
+func (s *AuthService) SetPublisher(nc *nats.Conn) {
+	if nc != nil {
+		s.publisher = messaging.NewPublisher(nc)
+	}
+}
+
+func (s *AuthService) NotifyUserDeleted(userID, email, username, role string) {
+	if s.publisher == nil {
+		return
+	}
+	s.publisher.PublishUserDeleted(messaging.AuthEvent{
+		UserID:   userID,
+		Email:    email,
+		Username: username,
+		Role:     role,
+	})
 }
 
 func (s *AuthService) Register(req *models.RegisterRequest) (*models.AuthResponse, error) {
@@ -97,6 +119,21 @@ func (s *AuthService) Register(req *models.RegisterRequest) (*models.AuthRespons
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
+	go func() {
+		if err := usecase.SendWelcomeEmail(user.Email, user.Username); err != nil {
+			log.Printf("[SMTP] welcome email failed for %s: %v", user.Email, err)
+		}
+	}()
+
+	if s.publisher != nil {
+		s.publisher.PublishUserRegistered(messaging.AuthEvent{
+			UserID:   user.ID,
+			Email:    user.Email,
+			Username: user.Username,
+			Role:     user.Role,
+		})
+	}
+
 	token := generateToken(user.ID, user.Email)
 	session := &models.Session{
 		ID:        generateID(),
@@ -108,8 +145,6 @@ func (s *AuthService) Register(req *models.RegisterRequest) (*models.AuthRespons
 	if err := s.sessionRepo.Create(session); err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
-
-	_ = usecase.SendWelcomeEmail(user.Email, user.Username)
 
 	return &models.AuthResponse{
 		UserID:      user.ID,
@@ -227,7 +262,18 @@ func (s *AuthService) ResetPassword(token, newPassword string) error {
 	_ = s.sessionRepo.DeleteByUserID(resetToken.UserID)
 
 	if u, err := s.userRepo.GetByID(resetToken.UserID); err == nil {
-		_ = usecase.SendPasswordChangedEmail(u.Email)
+		go func(email string) {
+			if err := usecase.SendPasswordChangedEmail(email); err != nil {
+				log.Printf("[SMTP] password changed email failed for %s: %v", email, err)
+			}
+		}(u.Email)
+		if s.publisher != nil {
+			s.publisher.PublishPasswordChanged(messaging.AuthEvent{
+				UserID: u.ID,
+				Email:  u.Email,
+				Role:   u.Role,
+			})
+		}
 	}
 
 	return nil
@@ -256,9 +302,21 @@ func (s *AuthService) ChangePassword(userID, oldPassword, newPassword string) er
 		return err
 	}
 
-	_ = usecase.SendPasswordChangedEmail(user.Email)
-
 	_ = s.sessionRepo.DeleteByUserID(userID)
+
+	go func() {
+		if err := usecase.SendPasswordChangedEmail(user.Email); err != nil {
+			log.Printf("[SMTP] password changed email failed for %s: %v", user.Email, err)
+		}
+	}()
+
+	if s.publisher != nil {
+		s.publisher.PublishPasswordChanged(messaging.AuthEvent{
+			UserID: user.ID,
+			Email:  user.Email,
+			Role:   user.Role,
+		})
+	}
 
 	return nil
 }
