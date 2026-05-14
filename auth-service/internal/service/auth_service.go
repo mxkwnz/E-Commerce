@@ -9,18 +9,39 @@ import (
 	"time"
 
 	"github.com/final-ap2-course2/auth-service/internal/models"
-	"github.com/final-ap2-course2/auth-service/internal/repository"
 	"github.com/final-ap2-course2/auth-service/internal/usecase"
 	"golang.org/x/crypto/bcrypt"
 )
 
-type AuthService struct {
-	userRepo       *repository.UserRepository
-	sessionRepo    *repository.SessionRepository
-	resetTokenRepo *repository.ResetTokenRepository
+type authUserRepository interface {
+	EmailExists(email string) (bool, error)
+	UsernameExists(username string) (bool, error)
+	Create(user *models.User) error
+	GetByEmail(email string) (*models.User, error)
+	GetByID(id string) (*models.User, error)
+	UpdatePassword(userID, passwordHash string) error
 }
 
-func NewAuthService(userRepo *repository.UserRepository, sessionRepo *repository.SessionRepository, resetTokenRepo *repository.ResetTokenRepository) *AuthService {
+type authSessionRepository interface {
+	Create(session *models.Session) error
+	GetByToken(token string) (*models.Session, error)
+	DeleteByToken(token string) error
+	DeleteByUserID(userID string) error
+}
+
+type authResetTokenRepository interface {
+	Create(resetToken *models.PasswordResetToken) error
+	GetByToken(token string) (*models.PasswordResetToken, error)
+	MarkAsUsed(token string) error
+}
+
+type AuthService struct {
+	userRepo       authUserRepository
+	sessionRepo    authSessionRepository
+	resetTokenRepo authResetTokenRepository
+}
+
+func NewAuthService(userRepo authUserRepository, sessionRepo authSessionRepository, resetTokenRepo authResetTokenRepository) *AuthService {
 	return &AuthService{
 		userRepo:       userRepo,
 		sessionRepo:    sessionRepo,
