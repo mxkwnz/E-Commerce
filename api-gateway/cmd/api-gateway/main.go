@@ -51,7 +51,18 @@ func main() {
 	mux.Handle("DELETE /users/{id}",
 		authMiddleware.Require(http.HandlerFunc(p.Auth)))
 
-	// NOTE: Alikhan will add product routes here
+	mux.HandleFunc("GET /products", p.Product)
+	mux.HandleFunc("GET /products/{id}", p.Product)
+	mux.HandleFunc("GET /inventory/{productId}", p.Product)
+	mux.Handle("POST /products",
+		authMiddleware.Require(http.HandlerFunc(p.Product)))
+	mux.Handle("PUT /products/{id}",
+		authMiddleware.Require(http.HandlerFunc(p.Product)))
+	mux.Handle("DELETE /products/{id}",
+		authMiddleware.Require(http.HandlerFunc(p.Product)))
+	mux.Handle("PUT /inventory/{productId}",
+		authMiddleware.Require(http.HandlerFunc(p.Product)))
+
 	// NOTE: Mukhammedali will add order and payment routes here
 
 	srv := &http.Server{
