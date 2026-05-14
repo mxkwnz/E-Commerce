@@ -70,15 +70,11 @@ services:
       timeout: 3s
       retries: 10
 
-  auth-service:
-    build: ./auth-service
-    depends_on:
-      - postgres-auth
-    environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres-auth:5432/auth_db?sslmode=disable
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
     ports:
-      - "8081:8081"
-      - "50053:50053"
+      - "1025:1025"
+      - "8025:8025"
 
   product-service:
     build: ./product-service
@@ -124,10 +120,14 @@ services:
     depends_on:
       postgres-auth:
         condition: service_healthy
-      nats:
+      mailhog:
         condition: service_started
     ports:
       - "8081:8081"
+      - "50053:50053"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres-auth:5432/auth_db?sslmode=disable
-      NATS_URL: nats://nats:4222
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+      SMTP_FROM: noreply@ecommerce.local
+      PASSWORD_RESET_BASE_URL: http://localhost:8081/reset-password
