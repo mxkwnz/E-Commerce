@@ -63,8 +63,40 @@ func main() {
 	mux.Handle("PUT /inventory/{productId}",
 		authMiddleware.Require(http.HandlerFunc(p.Product)))
 
-	// NOTE: Mukhammedali will add order and payment routes here
+	mux.Handle("GET /cart-items",
+		authMiddleware.Require(http.HandlerFunc(p.Order)))
+	mux.Handle("POST /cart-items",
+		authMiddleware.Require(http.HandlerFunc(p.Order)))
+	mux.Handle("PUT /cart-items/{id}",
+		authMiddleware.Require(http.HandlerFunc(p.Order)))
+	mux.Handle("DELETE /cart-items/{id}",
+		authMiddleware.Require(http.HandlerFunc(p.Order)))
 
+	mux.Handle("POST /orders/checkout",
+		authMiddleware.Require(http.HandlerFunc(p.Order)))
+	mux.Handle("GET /orders",
+		authMiddleware.Require(http.HandlerFunc(p.Order)))
+	mux.Handle("GET /orders/{id}",
+		authMiddleware.Require(http.HandlerFunc(p.Order)))
+	mux.Handle("POST /orders/{id}/confirm",
+		authMiddleware.Require(http.HandlerFunc(p.Order)))
+	mux.Handle("POST /orders/{id}/cancel",
+		authMiddleware.Require(http.HandlerFunc(p.Order)))
+
+	mux.Handle("POST /payments/pay",
+		authMiddleware.Require(http.HandlerFunc(p.Payment)))
+	mux.Handle("POST /payments",
+		authMiddleware.Require(http.HandlerFunc(p.Payment)))
+	mux.Handle("GET /payments",
+		authMiddleware.Require(http.HandlerFunc(p.Payment)))
+	mux.Handle("GET /payments/user/{userId}",
+		authMiddleware.Require(http.HandlerFunc(p.Payment)))
+	mux.Handle("GET /payments/{id}",
+		authMiddleware.Require(http.HandlerFunc(p.Payment)))
+	mux.Handle("PUT /payments/{id}",
+		authMiddleware.Require(http.HandlerFunc(p.Payment)))
+	mux.Handle("DELETE /payments/{id}",
+		authMiddleware.Require(http.HandlerFunc(p.Payment)))
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      middleware.Logger(middleware.CORS(mux)),
