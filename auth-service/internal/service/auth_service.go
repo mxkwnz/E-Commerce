@@ -88,6 +88,8 @@ func (s *AuthService) Register(req *models.RegisterRequest) (*models.AuthRespons
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
+	_ = usecase.SendWelcomeEmail(user.Email, user.Username)
+
 	return &models.AuthResponse{
 		UserID:      user.ID,
 		AccessToken: token,
@@ -203,6 +205,10 @@ func (s *AuthService) ResetPassword(token, newPassword string) error {
 
 	_ = s.sessionRepo.DeleteByUserID(resetToken.UserID)
 
+	if u, err := s.userRepo.GetByID(resetToken.UserID); err == nil {
+		_ = usecase.SendPasswordChangedEmail(u.Email)
+	}
+
 	return nil
 }
 
@@ -228,6 +234,8 @@ func (s *AuthService) ChangePassword(userID, oldPassword, newPassword string) er
 	if err := s.userRepo.UpdatePassword(userID, string(hashedPassword)); err != nil {
 		return err
 	}
+
+	_ = usecase.SendPasswordChangedEmail(user.Email)
 
 	_ = s.sessionRepo.DeleteByUserID(userID)
 
