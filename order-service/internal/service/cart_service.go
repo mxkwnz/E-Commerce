@@ -8,11 +8,20 @@ import (
 	"order-service/internal/repository"
 )
 
-type CartService struct {
-	cartRepo *repository.CartRepository
+type CartRepository interface {
+	Create(item *models.CartItem) error
+	GetByUserID(userID string) ([]models.CartItem, error)
+	GetByID(id string) (*models.CartItem, error)
+	Update(item *models.CartItem) error
+	Delete(id string) error
+	ClearUserCart(userID string) error
 }
 
-func NewCartService(cartRepo *repository.CartRepository) *CartService {
+type CartService struct {
+	cartRepo CartRepository
+}
+
+func NewCartService(cartRepo CartRepository) *CartService {
 	return &CartService{cartRepo: cartRepo}
 }
 

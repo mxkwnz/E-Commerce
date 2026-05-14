@@ -8,6 +8,10 @@ import (
 	"order-service/internal/models"
 )
 
+type CartRepositoryInterface interface {
+	ClearUserCartTx(tx *sql.Tx, userID string) error
+}
+
 type CartRepository struct{}
 
 func NewCartRepository() *CartRepository {
