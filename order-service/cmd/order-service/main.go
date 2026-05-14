@@ -14,6 +14,7 @@ import (
 	"order-service/internal/database"
 	grpcserver "order-service/internal/grpc"
 	"order-service/internal/handler"
+	"order-service/internal/messaging"
 	"order-service/internal/repository"
 	"order-service/internal/service"
 	pb "order-service/proto"
@@ -31,63 +32,71 @@ func main() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer database.Close()
-	log.Println("✓ Database connected")
 
 	if err := database.RunMigrations(); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
-	log.Println("✓ Migrations completed")
 
-	natsURL := os.Getenv("NATS_URL")
-	if natsURL == "" {
-		natsURL = "nats://localhost:4222"
+	natsURL := getenv("NATS_URL", "nats://localhost:4222")
+	var nc *nats.Conn
+	var err error
+	for i := 0; i < 5; i++ {
+		nc, err = nats.Connect(natsURL)
+		if err == nil {
+			break
+		}
+		log.Printf("[NATS] connection attempt %d failed: %v — retrying in 2s", i+1, err)
+		time.Sleep(2 * time.Second)
 	}
-	nc, err := nats.Connect(natsURL)
 	if err != nil {
-		log.Printf("⚠ NATS connection failed: %v (continuing without NATS)", err)
+		log.Printf("[NATS] could not connect after retries: %v (continuing without NATS)", err)
 		nc = nil
 	} else {
 		defer nc.Close()
-		log.Println("✓ NATS connected")
+		log.Println("[NATS] connected")
+	}
+
+	orderRepo := repository.NewOrderRepository()
+	cartRepo := repository.NewCartRepository()
+	orderSvc := service.NewOrderService(orderRepo, cartRepo, nc)
+
+	if nc != nil {
+		sub := messaging.NewSubscriber(nc, orderSvc)
+		if err := sub.Subscribe(); err != nil {
+			log.Printf("[NATS] subscribe error: %v", err)
+		} else {
+			defer sub.Drain()
+		}
 	}
 
 	grpcAddr := getenv("GRPC_ADDR", ":50051")
-	httpAddr := getenv("HTTP_ADDR", ":8083")
-
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		log.Fatalf("gRPC listen %s: %v", grpcAddr, err)
 	}
-
 	grpcSrv := grpc.NewServer(
 		grpc.MaxRecvMsgSize(10*1024*1024),
 		grpc.MaxSendMsgSize(10*1024*1024),
 	)
 	pb.RegisterOrderServiceServer(grpcSrv, grpcserver.NewOrderServer(nc))
-
 	go func() {
-		log.Println("=================================================")
-		log.Printf("✓ gRPC server listening on %s", grpcAddr)
-		log.Println("=================================================")
+		log.Printf("[gRPC] listening on %s", grpcAddr)
 		if err := grpcSrv.Serve(lis); err != nil {
-			log.Printf("gRPC server stopped: %v", err)
+			log.Printf("[gRPC] stopped: %v", err)
 		}
 	}()
 
-	cartRepo := repository.NewCartRepository()
-	orderRepo := repository.NewOrderRepository()
-	cartService := service.NewCartService(cartRepo)
-	orderService := service.NewOrderService(orderRepo, cartRepo, nc)
-
-	cartHandler := handler.NewCartHandler(cartService)
-	orderHandler := handler.NewOrderHandler(orderService)
-
+	httpAddr := getenv("HTTP_ADDR", ":8083")
+	cartSvc := service.NewCartService(cartRepo)
 	mux := http.NewServeMux()
+
+	cartHandler := handler.NewCartHandler(cartSvc)
+	orderHandler := handler.NewOrderHandler(orderSvc)
+
 	mux.HandleFunc("GET /cart-items", cartHandler.GetCart)
 	mux.HandleFunc("POST /cart-items", cartHandler.AddToCart)
 	mux.HandleFunc("PUT /cart-items/{id}", cartHandler.UpdateCartItem)
 	mux.HandleFunc("DELETE /cart-items/{id}", cartHandler.DeleteCartItem)
-
 	mux.HandleFunc("POST /orders/checkout", orderHandler.Checkout)
 	mux.HandleFunc("GET /orders", orderHandler.GetUserOrders)
 	mux.HandleFunc("GET /orders/{id}", orderHandler.GetOrder)
@@ -96,24 +105,18 @@ func main() {
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":    "ok",
-			"service":   "order-service",
-			"http_addr": httpAddr,
-			"grpc_addr": grpcAddr,
-			"protocols": []string{"HTTP/REST", "gRPC"},
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "ok",
+			"service": "order-service",
+			"nats":    nc != nil,
 		})
 	})
 
 	httpSrv := &http.Server{Addr: httpAddr, Handler: mux}
-
 	go func() {
-		log.Println("=================================================")
-		log.Printf("✓ HTTP server listening on %s", httpAddr)
-		log.Println("=================================================")
+		log.Printf("[HTTP] listening on %s", httpAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP server: %v", err)
+			log.Fatalf("[HTTP] %v", err)
 		}
 	}()
 
@@ -124,12 +127,8 @@ func main() {
 	log.Println("Shutting down gracefully...")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-
 	grpcSrv.GracefulStop()
-
-	if err := httpSrv.Shutdown(ctx); err != nil {
-		log.Printf("HTTP shutdown: %v", err)
-	}
+	_ = httpSrv.Shutdown(ctx)
 	log.Println("Shutdown complete")
 }
 
