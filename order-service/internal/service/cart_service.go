@@ -1,11 +1,11 @@
 package service
 
 import (
+	"database/sql"
 	"fmt"
 
 	"order-service/internal/currency"
 	"order-service/internal/models"
-	"order-service/internal/repository"
 )
 
 type CartRepository interface {
@@ -15,6 +15,7 @@ type CartRepository interface {
 	Update(item *models.CartItem) error
 	Delete(id string) error
 	ClearUserCart(userID string) error
+	ClearUserCartTx(tx *sql.Tx, userID string) error
 }
 
 type CartService struct {
