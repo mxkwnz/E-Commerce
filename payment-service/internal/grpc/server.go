@@ -2,13 +2,14 @@ package grpc
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"time"
 
 	"payment-service/internal/models"
 	"payment-service/internal/service"
 	pb "payment-service/proto"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -21,74 +22,92 @@ func NewPaymentServer(svc *service.PaymentService) *PaymentServer {
 	return &PaymentServer{svc: svc}
 }
 
-func (s *PaymentServer) CreatePayment(ctx context.Context, req *pb.CreatePaymentRequest) (*pb.PaymentResponse, error) {
-	p, err := s.svc.CreatePayment(req.GetUserId(), req.GetOrderId(), req.GetAmount(), req.GetCurrency(), req.GetPaymentMethod())
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+func (s *PaymentServer) CreatePayment(
+	ctx context.Context,
+	req *pb.CreatePaymentRequest,
+) (*pb.PaymentResponse, error) {
+	log.Printf("[gRPC] CreatePayment: user=%s order=%s amount=%.2f",
+		req.UserId, req.OrderId, req.Amount)
+
+	if req.UserId == "" || req.OrderId == "" {
+		return nil, fmt.Errorf("userId and orderId are required")
 	}
-	return &pb.PaymentResponse{Payment: paymentToProto(p)}, nil
+	if req.Amount <= 0 {
+		return nil, fmt.Errorf("amount must be positive")
+	}
+
+	p, err := s.svc.CreatePayment(req.UserId, req.OrderId, req.Amount, req.Currency, req.PaymentMethod)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.PaymentResponse{Payment: toProto(p)}, nil
 }
 
-func (s *PaymentServer) GetPayment(ctx context.Context, req *pb.GetPaymentRequest) (*pb.PaymentResponse, error) {
-	p, err := s.svc.GetPayment(req.GetId())
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "%v", err)
+func (s *PaymentServer) GetPayment(
+	ctx context.Context,
+	req *pb.GetPaymentRequest,
+) (*pb.PaymentResponse, error) {
+	log.Printf("[gRPC] GetPayment: id=%s", req.Id)
+	if req.Id == "" {
+		return nil, fmt.Errorf("id is required")
 	}
-	return &pb.PaymentResponse{Payment: paymentToProto(p)}, nil
+	p, err := s.svc.GetPayment(req.Id)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.PaymentResponse{Payment: toProto(p)}, nil
 }
 
-func (s *PaymentServer) ListUserPayments(ctx context.Context, req *pb.ListUserPaymentsRequest) (*pb.ListPaymentsResponse, error) {
-	all := s.svc.GetByUser(req.GetUserId())
-	page := int(req.GetPage())
-	if page <= 0 {
-		page = 1
+func (s *PaymentServer) ListUserPayments(
+	ctx context.Context,
+	req *pb.ListUserPaymentsRequest,
+) (*pb.ListPaymentsResponse, error) {
+	log.Printf("[gRPC] ListUserPayments: user=%s", req.UserId)
+	if req.UserId == "" {
+		return nil, fmt.Errorf("userId is required")
 	}
-	pageSize := int(req.GetPageSize())
-	if pageSize <= 0 {
-		pageSize = 10
-	}
-	start := (page - 1) * pageSize
-	if start > len(all) {
-		start = len(all)
-	}
-	end := start + pageSize
-	if end > len(all) {
-		end = len(all)
-	}
-	slice := all[start:end]
-	out := make([]*pb.Payment, 0, len(slice))
-	for i := range slice {
-		cp := slice[i]
-		out = append(out, paymentToProto(&cp))
+	payments := s.svc.GetByUser(req.UserId)
+	var pbPayments []*pb.Payment
+	for _, p := range payments {
+		cp := p
+		pbPayments = append(pbPayments, toProto(&cp))
 	}
 	return &pb.ListPaymentsResponse{
-		Payments:   out,
-		TotalCount: int32(len(all)),
+		Payments:   pbPayments,
+		TotalCount: int32(len(pbPayments)),
 	}, nil
 }
 
-func (s *PaymentServer) UpdatePaymentStatus(ctx context.Context, req *pb.UpdatePaymentStatusRequest) (*pb.PaymentResponse, error) {
-	p, err := s.svc.UpdateStatus(req.GetId(), req.GetStatus(), req.GetTransactionId())
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "%v", err)
+func (s *PaymentServer) UpdatePaymentStatus(
+	ctx context.Context,
+	req *pb.UpdatePaymentStatusRequest,
+) (*pb.PaymentResponse, error) {
+	log.Printf("[gRPC] UpdatePaymentStatus: id=%s status=%s", req.Id, req.Status)
+	if req.Id == "" {
+		return nil, fmt.Errorf("id is required")
 	}
-	return &pb.PaymentResponse{Payment: paymentToProto(p)}, nil
+	p, err := s.svc.UpdateStatus(req.Id, req.Status, req.TransactionId)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.PaymentResponse{Payment: toProto(p)}, nil
 }
 
-func paymentToProto(p *models.Payment) *pb.Payment {
+func toProto(p *models.Payment) *pb.Payment {
 	if p == nil {
 		return nil
 	}
+	now := timestamppb.New(time.Now())
 	return &pb.Payment{
-		Id:              p.ID,
-		UserId:          p.UserID,
-		OrderId:         p.OrderID,
-		Amount:          p.Amount,
-		Currency:        p.Currency,
-		Status:          p.Status,
-		PaymentMethod:   p.PaymentMethod,
-		TransactionId:   p.TransactionID,
-		CreatedAt:       timestamppb.New(p.CreatedAt),
-		UpdatedAt:       timestamppb.New(p.UpdatedAt),
+		Id:            p.ID,
+		UserId:        p.UserID,
+		OrderId:       p.OrderID,
+		Amount:        p.Amount,
+		Currency:      p.Currency,
+		Status:        p.Status,
+		PaymentMethod: p.PaymentMethod,
+		TransactionId: p.TransactionID,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 }

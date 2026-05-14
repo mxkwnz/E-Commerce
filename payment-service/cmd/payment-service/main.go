@@ -4,32 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"payment-service/internal/database"
+	paymentgrpc "payment-service/internal/grpc"
 	"payment-service/internal/messaging"
-	"payment-service/internal/repository"
 	"payment-service/internal/service"
+	paymentpb "payment-service/proto"
 
 	"github.com/nats-io/nats.go"
+	googlegrpc "google.golang.org/grpc"
 )
 
 func main() {
 	addr := getenv("HTTP_ADDR", ":8084")
 	natsURL := getenv("NATS_URL", "nats://localhost:4222")
-
-	if err := database.Connect(); err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer database.Close()
-
-	if err := database.RunMigrations(); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
-	}
 
 	var nc *nats.Conn
 	var err error
@@ -38,19 +31,18 @@ func main() {
 		if err == nil {
 			break
 		}
-		log.Printf("[NATS] attempt %d failed: %v — retrying in 2s", i+1, err)
+		log.Printf("[NATS] attempt %d failed — retrying in 2s", i+1)
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		log.Printf("[NATS] could not connect: %v (continuing without NATS)", err)
+		log.Printf("[NATS] unavailable: %v", err)
 		nc = nil
 	} else {
 		defer nc.Close()
 		log.Println("[NATS] connected")
 	}
 
-	repo := repository.NewPaymentRepository()
-	paymentSvc := service.NewPaymentService(repo)
+	paymentSvc := service.NewPaymentService()
 
 	if nc != nil {
 		sub := messaging.NewSubscriber(nc, paymentSvc)
@@ -61,7 +53,40 @@ func main() {
 		}
 	}
 
+	go func() {
+		lis, err := net.Listen("tcp", ":50054")
+		if err != nil {
+			log.Fatalf("[gRPC] payment-service listen :50054: %v", err)
+		}
+		s := googlegrpc.NewServer()
+		paymentpb.RegisterPaymentServiceServer(s, paymentgrpc.NewPaymentServer(paymentSvc))
+		log.Println("[gRPC] payment-service listening on :50054")
+		if err := s.Serve(lis); err != nil {
+			log.Printf("[gRPC] stopped: %v", err)
+		}
+	}()
+
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /payments/pay", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			UserID        string  `json:"userId"`
+			OrderID       string  `json:"orderId"`
+			Amount        float64 `json:"amount"`
+			Currency      string  `json:"currency"`
+			PaymentMethod string  `json:"paymentMethod"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+			return
+		}
+		p, err := paymentSvc.CreatePayment(in.UserID, in.OrderID, in.Amount, in.Currency, in.PaymentMethod)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, p)
+	})
 
 	mux.HandleFunc("POST /payments", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
@@ -84,18 +109,15 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /payments", func(w http.ResponseWriter, r *http.Request) {
-		orderID := r.URL.Query().Get("orderId")
-		writeJSON(w, http.StatusOK, paymentSvc.GetAll(orderID))
+		writeJSON(w, http.StatusOK, paymentSvc.GetAll(r.URL.Query().Get("orderId")))
 	})
 
 	mux.HandleFunc("GET /payments/user/{userId}", func(w http.ResponseWriter, r *http.Request) {
-		userID := r.PathValue("userId")
-		writeJSON(w, http.StatusOK, paymentSvc.GetByUser(userID))
+		writeJSON(w, http.StatusOK, paymentSvc.GetByUser(r.PathValue("userId")))
 	})
 
 	mux.HandleFunc("GET /payments/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		p, err := paymentSvc.GetPayment(id)
+		p, err := paymentSvc.GetPayment(r.PathValue("id"))
 		if err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
@@ -104,7 +126,6 @@ func main() {
 	})
 
 	mux.HandleFunc("PUT /payments/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
 		var in struct {
 			Status        string `json:"status"`
 			TransactionID string `json:"transactionId"`
@@ -113,7 +134,7 @@ func main() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 			return
 		}
-		p, err := paymentSvc.UpdateStatus(id, in.Status, in.TransactionID)
+		p, err := paymentSvc.UpdateStatus(r.PathValue("id"), in.Status, in.TransactionID)
 		if err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
@@ -122,8 +143,7 @@ func main() {
 	})
 
 	mux.HandleFunc("DELETE /payments/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		if err := paymentSvc.Delete(id); err != nil {
+		if err := paymentSvc.Delete(r.PathValue("id")); err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
 		}
@@ -149,7 +169,6 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
