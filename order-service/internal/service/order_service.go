@@ -7,23 +7,42 @@ import (
 	"strings"
 
 	"order-service/internal/currency"
+	"order-service/internal/messaging"
 	"order-service/internal/models"
 	"order-service/internal/repository"
 
 	"github.com/nats-io/nats.go"
 )
 
-type OrderService struct {
-	orderRepo *repository.OrderRepository
-	cartRepo  *repository.CartRepository
-	natsConn  *nats.Conn
+type OrderRepository interface {
+	Create(order *models.Order) error
+	CheckoutOrderAndClearCart(cart repository.CartRepositoryInterface, userID string, order *models.Order) error
+	GetByID(id string) (*models.Order, error)
+	GetByUserID(userID string) ([]models.Order, error)
+	UpdateStatus(orderID, status string) error
 }
 
-func NewOrderService(orderRepo *repository.OrderRepository, cartRepo *repository.CartRepository, nc *nats.Conn) *OrderService {
+type OrderService struct {
+	orderRepo OrderRepository
+	cartRepo  CartRepository
+	natsConn  *nats.Conn
+	publisher *messaging.Publisher
+}
+
+func NewOrderService(
+	orderRepo OrderRepository,
+	cartRepo CartRepository,
+	nc *nats.Conn,
+) *OrderService {
+	var pub *messaging.Publisher
+	if nc != nil {
+		pub = messaging.NewPublisher(nc)
+	}
 	return &OrderService{
 		orderRepo: orderRepo,
 		cartRepo:  cartRepo,
 		natsConn:  nc,
+		publisher: pub,
 	}
 }
 
@@ -32,7 +51,6 @@ func (s *OrderService) Checkout(userID string) (*models.CheckoutResponse, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cart: %w", err)
 	}
-
 	if len(cartItems) == 0 {
 		return nil, fmt.Errorf("cart is empty")
 	}
@@ -57,7 +75,6 @@ func (s *OrderService) Checkout(userID string) (*models.CheckoutResponse, error)
 	}
 
 	totalAmount := currency.SumLineTotals(cartItems)
-
 	order := &models.Order{
 		ID:          generateID(),
 		UserID:      userID,
@@ -71,7 +88,16 @@ func (s *OrderService) Checkout(userID string) (*models.CheckoutResponse, error)
 		return nil, fmt.Errorf("checkout failed: %w", err)
 	}
 
-	s.publishOrderEvent("order.created", order)
+	if s.publisher != nil {
+		s.publisher.PublishOrderCreated(messaging.OrderEvent{
+			OrderID:     order.ID,
+			UserID:      order.UserID,
+			TotalAmount: order.TotalAmount,
+			Currency:    order.Currency,
+			Status:      order.Status,
+			EventType:   "order.created",
+		})
+	}
 
 	return &models.CheckoutResponse{
 		OrderID:     order.ID,
@@ -107,13 +133,20 @@ func (s *OrderService) ConfirmOrder(orderID string) error {
 	if err := s.orderRepo.UpdateStatus(orderID, "confirmed"); err != nil {
 		return err
 	}
-
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
 		return err
 	}
-
-	s.publishOrderEvent("order.confirmed", order)
+	if s.publisher != nil {
+		s.publisher.PublishOrderConfirmed(messaging.OrderEvent{
+			OrderID:     order.ID,
+			UserID:      order.UserID,
+			TotalAmount: order.TotalAmount,
+			Currency:    order.Currency,
+			Status:      "confirmed",
+			EventType:   "order.confirmed",
+		})
+	}
 	return nil
 }
 
@@ -131,13 +164,20 @@ func (s *OrderService) CancelOrder(orderID string) error {
 	if err := s.orderRepo.UpdateStatus(orderID, "cancelled"); err != nil {
 		return err
 	}
-
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
 		return err
 	}
-
-	s.publishOrderEvent("order.cancelled", order)
+	if s.publisher != nil {
+		s.publisher.PublishOrderCancelled(messaging.OrderEvent{
+			OrderID:     order.ID,
+			UserID:      order.UserID,
+			TotalAmount: order.TotalAmount,
+			Currency:    order.Currency,
+			Status:      "cancelled",
+			EventType:   "order.cancelled",
+		})
+	}
 	return nil
 }
 
@@ -156,14 +196,12 @@ func (s *OrderService) GetOrdersByStatus(userID, status string) ([]models.Order,
 	if err != nil {
 		return nil, err
 	}
-
 	var filtered []models.Order
 	for _, order := range allOrders {
 		if status == "" || order.Status == status {
 			filtered = append(filtered, order)
 		}
 	}
-
 	return filtered, nil
 }
 
@@ -181,44 +219,29 @@ func (s *OrderService) GetStatistics(userID string) (*OrderStatistics, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	stats := &OrderStatistics{
-		Currency: "USD",
-	}
-
-	revenueCurrency := ""
-
+	stats := &OrderStatistics{Currency: "USD"}
+	revCurrency := ""
 	for _, order := range orders {
 		stats.TotalOrders++
-
 		switch order.Status {
 		case "pending":
 			stats.PendingOrders++
 		case "confirmed":
 			stats.ConfirmedOrders++
 			c := currency.Normalize(order.Currency)
-			if revenueCurrency == "" {
-				revenueCurrency = c
-			} else if c != revenueCurrency {
-				return nil, fmt.Errorf("cannot aggregate statistics: confirmed orders use mixed currencies")
+			if revCurrency == "" {
+				revCurrency = c
+			} else if c != revCurrency {
+				return nil, fmt.Errorf("mixed currencies in confirmed orders")
 			}
 			stats.TotalRevenue += order.TotalAmount
 		case "cancelled":
 			stats.CancelledOrders++
 		}
 	}
-
-	if revenueCurrency != "" {
-		stats.Currency = revenueCurrency
-	} else {
-		for _, order := range orders {
-			if order.Currency != "" {
-				stats.Currency = currency.Normalize(order.Currency)
-				break
-			}
-		}
+	if revCurrency != "" {
+		stats.Currency = revCurrency
 	}
-
 	return stats, nil
 }
 
@@ -227,14 +250,11 @@ func (s *OrderService) SearchOrders(userID, query string) ([]models.Order, error
 	if err != nil {
 		return nil, err
 	}
-
 	if query == "" {
 		return allOrders, nil
 	}
-
 	query = strings.ToLower(query)
 	var results []models.Order
-
 	for _, order := range allOrders {
 		if strings.Contains(strings.ToLower(order.ID), query) ||
 			strings.Contains(strings.ToLower(order.Status), query) ||
@@ -242,25 +262,6 @@ func (s *OrderService) SearchOrders(userID, query string) ([]models.Order, error
 			results = append(results, order)
 		}
 	}
-
 	return results, nil
 }
 
-func (s *OrderService) publishOrderEvent(subject string, order *models.Order) {
-	if s.natsConn == nil {
-		log.Println("NATS connection not available, skipping event publish")
-		return
-	}
-
-	data, err := json.Marshal(order)
-	if err != nil {
-		log.Printf("Failed to marshal order event: %v", err)
-		return
-	}
-
-	if err := s.natsConn.Publish(subject, data); err != nil {
-		log.Printf("Failed to publish order event: %v", err)
-	} else {
-		log.Printf("Published event: %s for order: %s", subject, order.ID)
-	}
-}

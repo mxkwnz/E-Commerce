@@ -47,7 +47,7 @@ func (r *OrderRepository) Create(order *models.Order) error {
 	return tx.Commit()
 }
 
-func (r *OrderRepository) CheckoutOrderAndClearCart(cart *CartRepository, userID string, order *models.Order) error {
+func (r *OrderRepository) CheckoutOrderAndClearCart(cart CartRepositoryInterface, userID string, order *models.Order) error {
 	tx, err := database.DB.Begin()
 	if err != nil {
 		return err
@@ -115,13 +115,28 @@ func (r *OrderRepository) GetByUserID(userID string) ([]models.Order, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		itemsQuery := `SELECT id, order_id, product_id, quantity, unit_price, currency, created_at
+					   FROM order_items WHERE order_id = $1`
+		itemRows, err := database.DB.Query(itemsQuery, order.ID)
+		if err == nil {
+			for itemRows.Next() {
+				var item models.OrderItem
+				if err := itemRows.Scan(&item.ID, &item.OrderID, &item.ProductID, &item.Quantity,
+					&item.UnitPrice, &item.Currency, &item.CreatedAt); err == nil {
+					order.Items = append(order.Items, item)
+				}
+			}
+			itemRows.Close()
+		}
+
 		orders = append(orders, order)
 	}
 	return orders, nil
 }
 
 func (r *OrderRepository) UpdateStatus(orderID, status string) error {
-	query := `UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
+	query := `UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND is_deleted = false`
 	result, err := database.DB.Exec(query, status, orderID)
 	if err != nil {
 		return err
