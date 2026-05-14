@@ -8,15 +8,18 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/final-ap2-course2/product-service/internal/cache"
 	"github.com/final-ap2-course2/product-service/internal/database"
 	grpcserver "github.com/final-ap2-course2/product-service/internal/grpc"
+	"github.com/final-ap2-course2/product-service/internal/messaging"
 	"github.com/final-ap2-course2/product-service/internal/models"
 	"github.com/final-ap2-course2/product-service/internal/repository"
 	"github.com/final-ap2-course2/product-service/internal/service"
 	pb "github.com/final-ap2-course2/product-service/proto"
 
+	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 )
 
@@ -33,61 +36,82 @@ func main() {
 	}
 
 	if err := cache.Connect(); err != nil {
-		log.Printf("⚠ Redis connection failed: %v (continuing without cache)", err)
+		log.Printf("Redis unavailable: %v (continuing without cache)", err)
 	} else {
 		defer cache.Close()
 	}
 
-	go startGRPCServer()
-	startHTTPServer()
-}
-
-func startGRPCServer() {
-	lis, err := net.Listen("tcp", ":50052")
+	natsURL := getenv("NATS_URL", "nats://localhost:4222")
+	var nc *nats.Conn
+	var err error
+	for i := 0; i < 5; i++ {
+		nc, err = nats.Connect(natsURL)
+		if err == nil {
+			break
+		}
+		log.Printf("[NATS] attempt %d failed — retrying in 2s", i+1)
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		log.Fatalf("Failed to listen on port 50052: %v", err)
+		log.Printf("[NATS] unavailable: %v (continuing without NATS)", err)
+		nc = nil
+	} else {
+		defer nc.Close()
+		log.Println("[NATS] connected")
 	}
 
-	grpcServer := grpc.NewServer(
+	productRepo := repository.NewProductRepository()
+	invRepo := repository.NewInventoryRepository()
+	productSvc := service.NewProductService(productRepo, invRepo)
+
+	if nc != nil {
+		sub := messaging.NewSubscriber(nc, productSvc)
+		if err := sub.Subscribe(); err != nil {
+			log.Printf("[NATS] subscribe error: %v", err)
+		} else {
+			defer sub.Drain()
+		}
+	}
+
+	go startGRPCServer(productSvc)
+	startHTTPServer(productSvc)
+}
+
+func startGRPCServer(productSvc *service.ProductService) {
+	lis, err := net.Listen("tcp", ":50052")
+	if err != nil {
+		log.Fatalf("gRPC listen :50052: %v", err)
+	}
+	s := grpc.NewServer(
 		grpc.MaxRecvMsgSize(10*1024*1024),
 		grpc.MaxSendMsgSize(10*1024*1024),
 	)
-
-	productServer := grpcserver.NewProductServer()
-	pb.RegisterProductServiceServer(grpcServer, productServer)
-
-	log.Println("✓ gRPC server listening on :50052")
-
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("Failed to serve gRPC: %v", err)
+	pb.RegisterProductServiceServer(s, grpcserver.NewProductServer())
+	log.Println("[gRPC] product-service listening on :50052")
+	if err := s.Serve(lis); err != nil {
+		log.Fatalf("gRPC serve: %v", err)
 	}
 }
 
-func startHTTPServer() {
-	productRepo := repository.NewProductRepository()
-	invRepo := repository.NewInventoryRepository()
-	productService := service.NewProductService(productRepo, invRepo)
-
+func startHTTPServer(productSvc *service.ProductService) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /products", func(w http.ResponseWriter, r *http.Request) {
 		brand := r.URL.Query().Get("brand")
 		category := r.URL.Query().Get("category")
-		query := r.URL.Query().Get("q")
-
+		q := r.URL.Query().Get("q")
 		var products []models.Product
 		var err error
-
-		if query != "" {
-			products, _, err = productService.SearchProducts(query, 1, 100)
-		} else if brand != "" {
-			products, _, err = productService.GetProductsByBrand(brand, 1, 100)
-		} else if category != "" {
-			products, _, err = productService.GetProductsByCategory(category, 1, 100)
-		} else {
-			products, _, err = productService.ListProducts(1, 100)
+		switch {
+		case q != "":
+			products, _, err = productSvc.SearchProducts(q, 1, 100)
+		case brand != "":
+			products, _, err = productSvc.GetProductsByBrand(brand, 1, 100)
+		case category != "":
+			products, _, err = productSvc.GetProductsByCategory(category, 1, 100)
+		default:
+			products, _, err = productSvc.ListProducts(1, 100)
 		}
-
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -96,13 +120,12 @@ func startHTTPServer() {
 	})
 
 	mux.HandleFunc("GET /products/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		product, err := productService.GetProduct(id)
+		p, err := productSvc.GetProduct(r.PathValue("id"))
 		if err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
 		}
-		writeJSON(w, http.StatusOK, product)
+		writeJSON(w, http.StatusOK, p)
 	})
 
 	mux.HandleFunc("POST /products", func(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +134,7 @@ func startHTTPServer() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 			return
 		}
-		if err := productService.CreateProduct(&product); err != nil {
+		if err := productSvc.CreateProduct(&product); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -125,17 +148,16 @@ func startHTTPServer() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 			return
 		}
-		if err := productService.UpdateProduct(id, &updates); err != nil {
+		if err := productSvc.UpdateProduct(id, &updates); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		product, _ := productService.GetProduct(id)
-		writeJSON(w, http.StatusOK, product)
+		p, _ := productSvc.GetProduct(id)
+		writeJSON(w, http.StatusOK, p)
 	})
 
 	mux.HandleFunc("DELETE /products/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		if err := productService.DeleteProduct(id); err != nil {
+		if err := productSvc.DeleteProduct(r.PathValue("id")); err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
 		}
@@ -143,17 +165,15 @@ func startHTTPServer() {
 	})
 
 	mux.HandleFunc("GET /inventory/{productId}", func(w http.ResponseWriter, r *http.Request) {
-		productID := r.PathValue("productId")
-		inventory, err := productService.GetInventory(productID)
+		inv, err := productSvc.GetInventory(r.PathValue("productId"))
 		if err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
 		}
-		writeJSON(w, http.StatusOK, inventory)
+		writeJSON(w, http.StatusOK, inv)
 	})
 
 	mux.HandleFunc("PUT /inventory/{productId}", func(w http.ResponseWriter, r *http.Request) {
-		productID := r.PathValue("productId")
 		var req struct {
 			Quantity int `json:"quantity"`
 		}
@@ -161,12 +181,12 @@ func startHTTPServer() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 			return
 		}
-		if err := productService.UpdateInventory(productID, req.Quantity); err != nil {
+		if err := productSvc.UpdateInventory(r.PathValue("productId"), req.Quantity); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		inventory, _ := productService.GetInventory(productID)
-		writeJSON(w, http.StatusOK, inventory)
+		inv, _ := productSvc.GetInventory(r.PathValue("productId"))
+		writeJSON(w, http.StatusOK, inv)
 	})
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
@@ -179,14 +199,12 @@ func startHTTPServer() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
 	go func() {
-		log.Println("✓ HTTP server listening on :8082")
+		log.Println("[HTTP] product-service listening on :8082")
 		if err := http.ListenAndServe(":8082", mux); err != nil {
 			log.Fatal(err)
 		}
 	}()
-
 	<-stop
 	log.Println("Shutting down gracefully...")
 }
@@ -195,4 +213,11 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
