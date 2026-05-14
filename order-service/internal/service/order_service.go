@@ -1,9 +1,7 @@
 package service
 
 import (
-	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 
 	"order-service/internal/currency"
@@ -264,4 +262,3 @@ func (s *OrderService) SearchOrders(userID, query string) ([]models.Order, error
 	}
 	return results, nil
 }
-
