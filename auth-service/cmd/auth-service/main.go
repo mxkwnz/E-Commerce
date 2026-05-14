@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/final-ap2-course2/auth-service/internal/database"
 	grpcserver "github.com/final-ap2-course2/auth-service/internal/grpc"
@@ -16,6 +17,7 @@ import (
 	"github.com/final-ap2-course2/auth-service/internal/service"
 	pb "github.com/final-ap2-course2/auth-service/proto"
 
+	"github.com/nats-io/nats.go"
 	grpclib "google.golang.org/grpc"
 )
 
@@ -35,12 +37,38 @@ func main() {
 	}
 	log.Println("Migrations completed")
 
-	go startGRPCServer()
+	natsURL := getenv("NATS_URL", "nats://localhost:4222")
+	var nc *nats.Conn
+	var natsErr error
+	for i := 0; i < 5; i++ {
+		nc, natsErr = nats.Connect(natsURL)
+		if natsErr == nil {
+			break
+		}
+		log.Printf("[NATS] attempt %d failed — retrying in 2s: %v", i+1, natsErr)
+		time.Sleep(2 * time.Second)
+	}
+	if natsErr != nil {
+		log.Printf("[NATS] unavailable: %v (continuing without NATS)", natsErr)
+		nc = nil
+	} else {
+		defer nc.Close()
+		log.Println("[NATS] auth-service connected")
+	}
 
-	startHTTPServer()
+	go startGRPCServer(nc)
+
+	startHTTPServer(nc)
 }
 
-func startGRPCServer() {
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func startGRPCServer(nc *nats.Conn) {
 	lis, err := net.Listen("tcp", ":50053")
 	if err != nil {
 		log.Fatalf("Failed to listen on port 50053: %v", err)
@@ -52,6 +80,7 @@ func startGRPCServer() {
 	)
 
 	authServer := grpcserver.NewAuthServer()
+	authServer.SetNATS(nc)
 	pb.RegisterAuthServiceServer(grpcServer, authServer)
 
 	log.Println("=================================================")
@@ -67,12 +96,13 @@ func startGRPCServer() {
 	}
 }
 
-func startHTTPServer() {
+func startHTTPServer(nc *nats.Conn) {
 	userRepo := repository.NewUserRepository()
 	sessionRepo := repository.NewSessionRepository()
 	resetTokenRepo := repository.NewResetTokenRepository()
 
 	authService := service.NewAuthService(userRepo, sessionRepo, resetTokenRepo)
+	authService.SetPublisher(nc)
 	userService := service.NewUserService(userRepo)
 
 	mux := http.NewServeMux()
@@ -178,10 +208,16 @@ func startHTTPServer() {
 
 	mux.HandleFunc("DELETE /users/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		user, err := userService.GetUser(id)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
 		if err := userService.DeleteUser(id); err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
 		}
+		authService.NotifyUserDeleted(user.ID, user.Email, user.Username, user.Role)
 		writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
 	})
 
