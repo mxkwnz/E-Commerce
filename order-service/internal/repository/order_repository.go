@@ -6,7 +6,10 @@ import (
 
 	"order-service/internal/database"
 	"order-service/internal/models"
+
+	"github.com/lib/pq"
 )
+
 
 type OrderRepository struct{}
 
@@ -22,10 +25,10 @@ func (r *OrderRepository) createOrderInTx(tx *sql.Tx, order *models.Order) error
 		return err
 	}
 
-	itemQuery := `INSERT INTO order_items (id, order_id, product_id, quantity, unit_price, currency)
-				  VALUES ($1, $2, $3, $4, $5, $6)`
+	itemQuery := `INSERT INTO order_items (id, order_id, product_id, quantity, unit_price, currency, size)
+				  VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	for _, item := range order.Items {
-		_, err = tx.Exec(itemQuery, item.ID, order.ID, item.ProductID, item.Quantity, item.UnitPrice, item.Currency)
+		_, err = tx.Exec(itemQuery, item.ID, order.ID, item.ProductID, item.Quantity, item.UnitPrice, item.Currency, item.Size)
 		if err != nil {
 			return err
 		}
@@ -77,7 +80,7 @@ func (r *OrderRepository) GetByID(id string) (*models.Order, error) {
 		return nil, err
 	}
 
-	itemsQuery := `SELECT id, order_id, product_id, quantity, unit_price, currency, created_at
+	itemsQuery := `SELECT id, order_id, product_id, quantity, unit_price, currency, COALESCE(size, '') as size, created_at
 				   FROM order_items WHERE order_id = $1`
 	rows, err := database.DB.Query(itemsQuery, id)
 	if err != nil {
@@ -88,7 +91,7 @@ func (r *OrderRepository) GetByID(id string) (*models.Order, error) {
 	for rows.Next() {
 		var item models.OrderItem
 		err := rows.Scan(&item.ID, &item.OrderID, &item.ProductID, &item.Quantity,
-			&item.UnitPrice, &item.Currency, &item.CreatedAt)
+			&item.UnitPrice, &item.Currency, &item.Size, &item.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -108,6 +111,9 @@ func (r *OrderRepository) GetByUserID(userID string) ([]models.Order, error) {
 	defer rows.Close()
 
 	var orders []models.Order
+	var orderIDs []string
+	orderMap := make(map[string]*models.Order)
+
 	for rows.Next() {
 		var order models.Order
 		err := rows.Scan(&order.ID, &order.UserID, &order.TotalAmount, &order.Currency,
@@ -115,25 +121,95 @@ func (r *OrderRepository) GetByUserID(userID string) ([]models.Order, error) {
 		if err != nil {
 			return nil, err
 		}
-
-		itemsQuery := `SELECT id, order_id, product_id, quantity, unit_price, currency, created_at
-					   FROM order_items WHERE order_id = $1`
-		itemRows, err := database.DB.Query(itemsQuery, order.ID)
-		if err == nil {
-			for itemRows.Next() {
-				var item models.OrderItem
-				if err := itemRows.Scan(&item.ID, &item.OrderID, &item.ProductID, &item.Quantity,
-					&item.UnitPrice, &item.Currency, &item.CreatedAt); err == nil {
-					order.Items = append(order.Items, item)
-				}
-			}
-			itemRows.Close()
-		}
-
+		order.Items = []models.OrderItem{}
 		orders = append(orders, order)
+		orderIDs = append(orderIDs, order.ID)
+		orderMap[order.ID] = &orders[len(orders)-1]
 	}
+
+	if len(orderIDs) > 0 {
+		// Use ANY($1) for bulk loading items
+		itemsQuery := `SELECT id, order_id, product_id, quantity, unit_price, currency, COALESCE(size, '') as size, created_at
+					   FROM order_items WHERE order_id = ANY($1)`
+		
+		// Convert slice to string array format for Postgres ANY
+		itemRows, err := database.DB.Query(itemsQuery, pq.Array(orderIDs))
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch order items: %w", err)
+		}
+		defer itemRows.Close()
+
+		for itemRows.Next() {
+			var item models.OrderItem
+			if err := itemRows.Scan(&item.ID, &item.OrderID, &item.ProductID, &item.Quantity,
+				&item.UnitPrice, &item.Currency, &item.Size, &item.CreatedAt); err != nil {
+				return nil, err
+			}
+			if o, ok := orderMap[item.OrderID]; ok {
+				o.Items = append(o.Items, item)
+			}
+		}
+	}
+
 	return orders, nil
 }
+
+func (r *OrderRepository) Search(userID, query string) ([]models.Order, error) {
+	searchTerm := "%" + query + "%"
+	sqlQuery := `SELECT id, user_id, total_amount, currency, status, is_deleted, created_at, updated_at
+			  FROM orders 
+			  WHERE user_id = $1 AND is_deleted = false 
+			  AND (id ILIKE $2 OR status ILIKE $2 OR CAST(total_amount AS TEXT) ILIKE $2)
+			  ORDER BY created_at DESC`
+	
+	rows, err := database.DB.Query(sqlQuery, userID, searchTerm)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []models.Order
+	var orderIDs []string
+	orderMap := make(map[string]*models.Order)
+
+	for rows.Next() {
+		var order models.Order
+		err := rows.Scan(&order.ID, &order.UserID, &order.TotalAmount, &order.Currency,
+			&order.Status, &order.IsDeleted, &order.CreatedAt, &order.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		order.Items = []models.OrderItem{}
+		orders = append(orders, order)
+		orderIDs = append(orderIDs, order.ID)
+		orderMap[order.ID] = &orders[len(orders)-1]
+	}
+
+	if len(orderIDs) > 0 {
+		itemsQuery := `SELECT id, order_id, product_id, quantity, unit_price, currency, COALESCE(size, '') as size, created_at
+					   FROM order_items WHERE order_id = ANY($1)`
+		
+		itemRows, err := database.DB.Query(itemsQuery, pq.Array(orderIDs))
+		if err != nil {
+			return nil, err
+		}
+		defer itemRows.Close()
+
+		for itemRows.Next() {
+			var item models.OrderItem
+			if err := itemRows.Scan(&item.ID, &item.OrderID, &item.ProductID, &item.Quantity,
+				&item.UnitPrice, &item.Currency, &item.Size, &item.CreatedAt); err != nil {
+				return nil, err
+			}
+			if o, ok := orderMap[item.OrderID]; ok {
+				o.Items = append(o.Items, item)
+			}
+		}
+	}
+
+	return orders, nil
+}
+
 
 func (r *OrderRepository) UpdateStatus(orderID, status string) error {
 	query := `UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND is_deleted = false`
@@ -146,4 +222,93 @@ func (r *OrderRepository) UpdateStatus(orderID, status string) error {
 		return fmt.Errorf("order not found")
 	}
 	return nil
+}
+
+func (r *OrderRepository) SoftDelete(orderID string) error {
+	res, err := database.DB.Exec(
+		`UPDATE orders SET is_deleted = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND is_deleted = false`,
+		orderID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("order not found")
+	}
+	return nil
+}
+
+func (r *OrderRepository) ListOrders(userID, status, search string, limit int) ([]models.Order, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	base := `SELECT id, user_id, total_amount, currency, status, is_deleted, created_at, updated_at
+			 FROM orders WHERE is_deleted = false`
+	args := []interface{}{}
+	n := 1
+	if userID != "" {
+		base += fmt.Sprintf(" AND user_id = $%d", n)
+		args = append(args, userID)
+		n++
+	}
+	if status != "" {
+		base += fmt.Sprintf(" AND status = $%d", n)
+		args = append(args, status)
+		n++
+	}
+	if search != "" {
+		term := "%" + search + "%"
+		base += fmt.Sprintf(" AND (id ILIKE $%d OR status ILIKE $%d OR CAST(total_amount AS TEXT) ILIKE $%d)", n, n+1, n+2)
+		args = append(args, term, term, term)
+		n += 3
+	}
+	base += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", n)
+	args = append(args, limit)
+
+	rows, err := database.DB.Query(base, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []models.Order
+	var orderIDs []string
+	orderMap := make(map[string]*models.Order)
+
+	for rows.Next() {
+		var order models.Order
+		err := rows.Scan(&order.ID, &order.UserID, &order.TotalAmount, &order.Currency,
+			&order.Status, &order.IsDeleted, &order.CreatedAt, &order.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		order.Items = []models.OrderItem{}
+		orders = append(orders, order)
+		orderIDs = append(orderIDs, order.ID)
+		orderMap[order.ID] = &orders[len(orders)-1]
+	}
+
+	if len(orderIDs) > 0 {
+		itemsQuery := `SELECT id, order_id, product_id, quantity, unit_price, currency, COALESCE(size, '') as size, created_at
+					   FROM order_items WHERE order_id = ANY($1)`
+		itemRows, err := database.DB.Query(itemsQuery, pq.Array(orderIDs))
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch order items: %w", err)
+		}
+		defer itemRows.Close()
+
+		for itemRows.Next() {
+			var item models.OrderItem
+			if err := itemRows.Scan(&item.ID, &item.OrderID, &item.ProductID, &item.Quantity,
+				&item.UnitPrice, &item.Currency, &item.Size, &item.CreatedAt); err != nil {
+				return nil, err
+			}
+			if o, ok := orderMap[item.OrderID]; ok {
+				o.Items = append(o.Items, item)
+			}
+		}
+	}
+
+	return orders, nil
 }

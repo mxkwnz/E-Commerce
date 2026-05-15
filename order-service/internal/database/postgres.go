@@ -72,6 +72,8 @@ func RunMigrations() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_cart_user ON cart_items(user_id) WHERE is_deleted = false`,
 		`CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id) WHERE is_deleted = false`,
+		`ALTER TABLE cart_items ADD COLUMN IF NOT EXISTS size VARCHAR(20)`,
+		`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS size VARCHAR(20)`,
 	}
 
 	for i, migration := range migrations {

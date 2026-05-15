@@ -9,6 +9,7 @@ type CartItem struct {
 	Quantity  int       `json:"quantity"`
 	UnitPrice float64   `json:"unitPrice"`
 	Currency  string    `json:"currency"`
+	Size      string    `json:"size"`
 	IsDeleted bool      `json:"isDeleted"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -33,6 +34,7 @@ type OrderItem struct {
 	Quantity  int       `json:"quantity"`
 	UnitPrice float64   `json:"unitPrice"`
 	Currency  string    `json:"currency"`
+	Size      string    `json:"size"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 

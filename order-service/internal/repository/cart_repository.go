@@ -19,14 +19,14 @@ func NewCartRepository() *CartRepository {
 }
 
 func (r *CartRepository) Create(item *models.CartItem) error {
-	query := `INSERT INTO cart_items (id, user_id, product_id, quantity, unit_price, currency)
-			  VALUES ($1, $2, $3, $4, $5, $6)`
-	_, err := database.DB.Exec(query, item.ID, item.UserID, item.ProductID, item.Quantity, item.UnitPrice, item.Currency)
+	query := `INSERT INTO cart_items (id, user_id, product_id, quantity, unit_price, currency, size)
+			  VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	_, err := database.DB.Exec(query, item.ID, item.UserID, item.ProductID, item.Quantity, item.UnitPrice, item.Currency, item.Size)
 	return err
 }
 
 func (r *CartRepository) GetByUserID(userID string) ([]models.CartItem, error) {
-	query := `SELECT id, user_id, product_id, quantity, unit_price, currency, is_deleted, created_at, updated_at
+	query := `SELECT id, user_id, product_id, quantity, unit_price, currency, COALESCE(size, '') as size, is_deleted, created_at, updated_at
 			  FROM cart_items WHERE user_id = $1 AND is_deleted = false`
 	rows, err := database.DB.Query(query, userID)
 	if err != nil {
@@ -38,7 +38,7 @@ func (r *CartRepository) GetByUserID(userID string) ([]models.CartItem, error) {
 	for rows.Next() {
 		var item models.CartItem
 		err := rows.Scan(&item.ID, &item.UserID, &item.ProductID, &item.Quantity,
-			&item.UnitPrice, &item.Currency, &item.IsDeleted, &item.CreatedAt, &item.UpdatedAt)
+			&item.UnitPrice, &item.Currency, &item.Size, &item.IsDeleted, &item.CreatedAt, &item.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -48,11 +48,11 @@ func (r *CartRepository) GetByUserID(userID string) ([]models.CartItem, error) {
 }
 
 func (r *CartRepository) GetByID(id string) (*models.CartItem, error) {
-	query := `SELECT id, user_id, product_id, quantity, unit_price, currency, is_deleted, created_at, updated_at
+	query := `SELECT id, user_id, product_id, quantity, unit_price, currency, COALESCE(size, '') as size, is_deleted, created_at, updated_at
 			  FROM cart_items WHERE id = $1 AND is_deleted = false`
 	var item models.CartItem
 	err := database.DB.QueryRow(query, id).Scan(&item.ID, &item.UserID, &item.ProductID,
-		&item.Quantity, &item.UnitPrice, &item.Currency, &item.IsDeleted, &item.CreatedAt, &item.UpdatedAt)
+		&item.Quantity, &item.UnitPrice, &item.Currency, &item.Size, &item.IsDeleted, &item.CreatedAt, &item.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("cart item not found")
 	}

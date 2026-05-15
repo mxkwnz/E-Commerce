@@ -2,13 +2,14 @@ package service
 
 import (
 	"crypto/rand"
-	"fmt"
-	"strings"
-	"time"
+	"encoding/hex"
+
 )
 
 func generateID() string {
-	b := make([]byte, 4)
+	b := make([]byte, 16)
 	rand.Read(b)
-	return fmt.Sprintf("%s%x", strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000"), ".", ""), b)
+	return hex.EncodeToString(b)
 }
+
+
