@@ -40,7 +40,7 @@ func main() {
 	natsURL := getenv("NATS_URL", "nats://localhost:4222")
 	var nc *nats.Conn
 	var err error
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		nc, err = nats.Connect(natsURL)
 		if err == nil {
 			break
@@ -56,6 +56,7 @@ func main() {
 		log.Println("[NATS] connected")
 	}
 
+
 	orderRepo := repository.NewOrderRepository()
 	cartRepo := repository.NewCartRepository()
 	orderSvc := service.NewOrderService(orderRepo, cartRepo, nc)
@@ -66,6 +67,11 @@ func main() {
 			log.Printf("[NATS] subscribe error: %v", err)
 		} else {
 			defer sub.Drain()
+		}
+		if js, err := nc.JetStream(); err != nil {
+			log.Printf("[NATS] JetStream error: %v", err)
+		} else if _, err := messaging.StartCheckoutConsumer(js, orderSvc); err != nil {
+			log.Printf("[NATS] checkout consumer error: %v", err)
 		}
 	}
 
@@ -94,16 +100,24 @@ func main() {
 	orderHandler := handler.NewOrderHandler(orderSvc)
 
 	mux.HandleFunc("GET /cart-items", cartHandler.GetCart)
+	mux.HandleFunc("GET /cart-items/{id}", cartHandler.GetCartItemByID)
+	mux.HandleFunc("GET /users/{userId}/cart-items", cartHandler.ListCartForPathUser)
 	mux.HandleFunc("POST /cart-items", cartHandler.AddToCart)
 	mux.HandleFunc("PUT /cart-items/{id}", cartHandler.UpdateCartItem)
 	mux.HandleFunc("DELETE /cart-items/{id}", cartHandler.DeleteCartItem)
 	mux.HandleFunc("POST /orders/checkout", orderHandler.Checkout)
+	mux.HandleFunc("POST /orders", orderHandler.CreateOrder)
 	mux.HandleFunc("GET /orders", orderHandler.GetUserOrders)
+	mux.HandleFunc("GET /users/{userId}/orders", orderHandler.GetOrdersForPathUser)
 	mux.HandleFunc("GET /orders/{id}", orderHandler.GetOrder)
+	mux.HandleFunc("PUT /orders/{id}", orderHandler.UpdateOrder)
+	mux.HandleFunc("DELETE /orders/{id}", orderHandler.DeleteOrder)
 	mux.HandleFunc("POST /orders/{id}/confirm", orderHandler.ConfirmOrder)
 	mux.HandleFunc("POST /orders/{id}/cancel", orderHandler.CancelOrder)
 
+
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status":  "ok",

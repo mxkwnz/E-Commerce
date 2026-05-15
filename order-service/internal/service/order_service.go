@@ -2,9 +2,9 @@ package service
 
 import (
 	"fmt"
-	"strings"
 
 	"order-service/internal/currency"
+
 	"order-service/internal/messaging"
 	"order-service/internal/models"
 	"order-service/internal/repository"
@@ -18,7 +18,11 @@ type OrderRepository interface {
 	GetByID(id string) (*models.Order, error)
 	GetByUserID(userID string) ([]models.Order, error)
 	UpdateStatus(orderID, status string) error
+	Search(userID, query string) ([]models.Order, error)
+	ListOrders(userID, status, search string, limit int) ([]models.Order, error)
+	SoftDelete(orderID string) error
 }
+
 
 type OrderService struct {
 	orderRepo OrderRepository
@@ -69,6 +73,7 @@ func (s *OrderService) Checkout(userID string) (*models.CheckoutResponse, error)
 			Quantity:  item.Quantity,
 			UnitPrice: item.UnitPrice,
 			Currency:  currency.Normalize(item.Currency),
+			Size:      item.Size,
 		})
 	}
 
@@ -105,6 +110,11 @@ func (s *OrderService) Checkout(userID string) (*models.CheckoutResponse, error)
 	}, nil
 }
 
+func (s *OrderService) RunCheckout(userID string) error {
+	_, err := s.Checkout(userID)
+	return err
+}
+
 func (s *OrderService) GetOrder(orderID string) (*models.Order, error) {
 	return s.orderRepo.GetByID(orderID)
 }
@@ -128,13 +138,21 @@ func (s *OrderService) GetUserOrders(userID string) ([]models.Order, error) {
 }
 
 func (s *OrderService) ConfirmOrder(orderID string) error {
-	if err := s.orderRepo.UpdateStatus(orderID, "confirmed"); err != nil {
-		return err
-	}
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
 		return err
 	}
+	if order.Status == "confirmed" {
+		return nil
+	}
+	if order.Status == "cancelled" {
+		return fmt.Errorf("cannot confirm a cancelled order")
+	}
+
+	if err := s.orderRepo.UpdateStatus(orderID, "confirmed"); err != nil {
+		return err
+	}
+
 	if s.publisher != nil {
 		s.publisher.PublishOrderConfirmed(messaging.OrderEvent{
 			OrderID:     order.ID,
@@ -148,6 +166,7 @@ func (s *OrderService) ConfirmOrder(orderID string) error {
 	return nil
 }
 
+
 func (s *OrderService) ConfirmOrderForUser(orderID, userID string) error {
 	if userID == "" {
 		return fmt.Errorf("user_id is required")
@@ -159,13 +178,21 @@ func (s *OrderService) ConfirmOrderForUser(orderID, userID string) error {
 }
 
 func (s *OrderService) CancelOrder(orderID string) error {
-	if err := s.orderRepo.UpdateStatus(orderID, "cancelled"); err != nil {
-		return err
-	}
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
 		return err
 	}
+	if order.Status == "cancelled" {
+		return nil
+	}
+	if order.Status == "confirmed" {
+		return fmt.Errorf("cannot cancel a confirmed order")
+	}
+
+	if err := s.orderRepo.UpdateStatus(orderID, "cancelled"); err != nil {
+		return err
+	}
+
 	if s.publisher != nil {
 		s.publisher.PublishOrderCancelled(messaging.OrderEvent{
 			OrderID:     order.ID,
@@ -178,6 +205,7 @@ func (s *OrderService) CancelOrder(orderID string) error {
 	}
 	return nil
 }
+
 
 func (s *OrderService) CancelOrderForUser(orderID, userID string) error {
 	if userID == "" {
@@ -244,21 +272,50 @@ func (s *OrderService) GetStatistics(userID string) (*OrderStatistics, error) {
 }
 
 func (s *OrderService) SearchOrders(userID, query string) ([]models.Order, error) {
-	allOrders, err := s.orderRepo.GetByUserID(userID)
-	if err != nil {
-		return nil, err
-	}
 	if query == "" {
-		return allOrders, nil
+		return s.orderRepo.GetByUserID(userID)
 	}
-	query = strings.ToLower(query)
-	var results []models.Order
-	for _, order := range allOrders {
-		if strings.Contains(strings.ToLower(order.ID), query) ||
-			strings.Contains(strings.ToLower(order.Status), query) ||
-			strings.Contains(fmt.Sprintf("%.2f", order.TotalAmount), query) {
-			results = append(results, order)
-		}
-	}
-	return results, nil
+	return s.orderRepo.Search(userID, query)
 }
+
+func (s *OrderService) ListOrdersForViewer(viewerID, viewerRole, filterUserID, status, q string) ([]models.Order, error) {
+	effectiveUser := filterUserID
+	if viewerRole != "admin" {
+		effectiveUser = viewerID
+	}
+	return s.orderRepo.ListOrders(effectiveUser, status, q, 200)
+}
+
+func (s *OrderService) DeleteOrder(orderID, viewerID, viewerRole string) error {
+	order, err := s.orderRepo.GetByID(orderID)
+	if err != nil {
+		return err
+	}
+	if viewerRole != "admin" && order.UserID != viewerID {
+		return fmt.Errorf("order not found")
+	}
+	return s.orderRepo.SoftDelete(orderID)
+}
+
+func (s *OrderService) UpdateOrderStatus(orderID, newStatus, viewerID, viewerRole string) error {
+	order, err := s.orderRepo.GetByID(orderID)
+	if err != nil {
+		return err
+	}
+	if viewerRole != "admin" && order.UserID != viewerID {
+		return fmt.Errorf("order not found")
+	}
+	switch newStatus {
+	case "pending", "confirmed", "cancelled":
+	default:
+		return fmt.Errorf("invalid status")
+	}
+	if newStatus == "confirmed" {
+		return s.ConfirmOrder(orderID)
+	}
+	if newStatus == "cancelled" {
+		return s.CancelOrder(orderID)
+	}
+	return s.orderRepo.UpdateStatus(orderID, newStatus)
+}
+
