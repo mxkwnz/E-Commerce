@@ -8,6 +8,7 @@ type Config struct {
 	ProductServiceURL string
 	OrderServiceURL   string
 	PaymentServiceURL string
+	NATSURL           string
 }
 
 func Load() *Config {
@@ -17,6 +18,7 @@ func Load() *Config {
 		ProductServiceURL: getenv("PRODUCT_SERVICE_URL", "http://localhost:8082"),
 		OrderServiceURL:   getenv("ORDER_SERVICE_URL", "http://localhost:8083"),
 		PaymentServiceURL: getenv("PAYMENT_SERVICE_URL", "http://localhost:8084"),
+		NATSURL:           getenv("NATS_URL", "nats://localhost:4222"),
 	}
 }
 
