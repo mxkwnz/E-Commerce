@@ -3,12 +3,15 @@ package middleware
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 )
+
+var ErrAuthUnreachable = errors.New("auth service unreachable")
 
 type AuthMiddleware struct {
 	authURL    string
@@ -26,7 +29,7 @@ func NewAuthMiddleware(authServiceURL string) *AuthMiddleware {
 
 func (m *AuthMiddleware) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := extractToken(r)
+		token := ExtractToken(r)
 		if token == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{
 				"error": "authorization token required",
@@ -51,6 +54,39 @@ func (m *AuthMiddleware) Require(next http.Handler) http.Handler {
 	})
 }
 
+func (m *AuthMiddleware) RequireAllowAuthDown(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := ExtractToken(r)
+		if token == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "authorization token required",
+			})
+			return
+		}
+
+		user, err := m.validate(token)
+		if err == nil {
+			r.Header.Set("X-User-ID", user.ID)
+			r.Header.Set("X-User-Email", user.Email)
+			r.Header.Set("X-User-Role", user.Role)
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if errors.Is(err, ErrAuthUnreachable) {
+			log.Printf("[AUTH] auth-service unreachable, deferring auth for request: %v", err)
+			r.Header.Set("X-Auth-Unavailable", "true")
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		log.Printf("[AUTH] validation error: %v", err)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error": "invalid or expired token",
+		})
+	})
+}
+
 func (m *AuthMiddleware) validate(token string) (*userInfo, error) {
 	req, err := http.NewRequest(http.MethodPost, m.authURL+"/auth/validate", nil)
 	if err != nil {
@@ -60,13 +96,17 @@ func (m *AuthMiddleware) validate(token string) (*userInfo, error) {
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrAuthUnreachable, err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	if resp.StatusCode >= http.StatusBadGateway {
+		return nil, ErrAuthUnreachable
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -86,7 +126,7 @@ type userInfo struct {
 	Role  string `json:"role"`
 }
 
-func extractToken(r *http.Request) string {
+func ExtractToken(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if h == "" {
 		return ""
