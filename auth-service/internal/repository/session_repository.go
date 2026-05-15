@@ -22,6 +22,40 @@ func (r *SessionRepository) Create(session *models.Session) error {
 	return err
 }
 
+func (r *SessionRepository) GetActiveByUserID(userID string) (*models.Session, error) {
+	query := `SELECT id, user_id, token, expires_at, created_at
+			  FROM sessions WHERE user_id = $1 AND expires_at > $2
+			  ORDER BY expires_at DESC LIMIT 1`
+	var session models.Session
+	err := database.DB.QueryRow(query, userID, time.Now()).Scan(
+		&session.ID, &session.UserID, &session.Token, &session.ExpiresAt, &session.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("session not found or expired")
+	}
+	return &session, err
+}
+
+func (r *SessionRepository) GetLatestByUserID(userID string) (*models.Session, error) {
+	query := `SELECT id, user_id, token, expires_at, created_at
+			  FROM sessions WHERE user_id = $1
+			  ORDER BY created_at DESC LIMIT 1`
+	var session models.Session
+	err := database.DB.QueryRow(query, userID).Scan(
+		&session.ID, &session.UserID, &session.Token, &session.ExpiresAt, &session.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("session not found")
+	}
+	return &session, err
+}
+
+func (r *SessionRepository) RenewExpiry(sessionID string, expiresAt time.Time) error {
+	query := `UPDATE sessions SET expires_at = $1 WHERE id = $2`
+	_, err := database.DB.Exec(query, expiresAt, sessionID)
+	return err
+}
+
 func (r *SessionRepository) GetByToken(token string) (*models.Session, error) {
 	query := `SELECT id, user_id, token, expires_at, created_at
 			  FROM sessions WHERE token = $1 AND expires_at > $2`

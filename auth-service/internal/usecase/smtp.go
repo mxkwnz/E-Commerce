@@ -40,9 +40,11 @@ func sendEmail(to, subject, body string) error {
 	cfg := loadSMTPConfig()
 
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
-		log.Printf("[SMTP] credentials not configured — logging email instead")
-		log.Printf("[SMTP] TO: %s | SUBJECT: %s | BODY: %s", to, subject, body)
-		return nil
+		if cfg.Host != "mailhog" {
+			log.Printf("[SMTP] credentials not configured — logging email instead")
+			log.Printf("[SMTP] TO: %s | SUBJECT: %s | BODY: %s", to, subject, body)
+			return nil
+		}
 	}
 
 	addr := net.JoinHostPort(cfg.Host, cfg.Port)
@@ -84,8 +86,10 @@ func sendEmail(to, subject, body string) error {
 		}
 	}
 
-	if err := client.Auth(auth); err != nil {
-		return fmt.Errorf("smtp auth: %w", err)
+	if cfg.Username != "" && cfg.Password != "" {
+		if err := client.Auth(auth); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
 	}
 	if err := client.Mail(cfg.From); err != nil {
 		return fmt.Errorf("smtp mail from: %w", err)
@@ -108,7 +112,7 @@ func sendEmail(to, subject, body string) error {
 
 func SendResetEmail(email, resetToken string) error {
 	appURL := strings.TrimSuffix(getEnv("APP_URL", "https://yourapp.com"), "/")
-	resetLink := fmt.Sprintf("%s/reset-password?token=%s", appURL, resetToken)
+	resetLink := fmt.Sprintf("%s/auth.html?token=%s", appURL, resetToken)
 
 	subject := "Password Reset Request"
 	body := fmt.Sprintf(`Hello,
@@ -160,6 +164,25 @@ If you did not make this change, please contact support immediately.
 `
 	if err := sendEmail(email, subject, body); err != nil {
 		log.Printf("[SMTP] SendPasswordChangedEmail failed: %v", err)
+		return err
+	}
+	return nil
+}
+
+func SendPasswordChangeVerificationEmail(email, code string) error {
+	subject := "Your password change verification code"
+	body := fmt.Sprintf(`Hello,
+
+You requested to change your password. Use this verification code (valid for 15 minutes):
+
+%s
+
+If you did not request this, please ignore this email and your password will stay the same.
+
+— The E-Commerce Team
+`, code)
+	if err := sendEmail(email, subject, body); err != nil {
+		log.Printf("[SMTP] SendPasswordChangeVerificationEmail failed: %v", err)
 		return err
 	}
 	return nil

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+
 
 	"github.com/final-ap2-course2/auth-service/internal/messaging"
 	"github.com/final-ap2-course2/auth-service/internal/models"
@@ -28,6 +31,9 @@ type authUserRepository interface {
 type authSessionRepository interface {
 	Create(session *models.Session) error
 	GetByToken(token string) (*models.Session, error)
+	GetActiveByUserID(userID string) (*models.Session, error)
+	GetLatestByUserID(userID string) (*models.Session, error)
+	RenewExpiry(sessionID string, expiresAt time.Time) error
 	DeleteByToken(token string) error
 	DeleteByUserID(userID string) error
 }
@@ -38,18 +44,27 @@ type authResetTokenRepository interface {
 	MarkAsUsed(token string) error
 }
 
-type AuthService struct {
-	userRepo       authUserRepository
-	sessionRepo    authSessionRepository
-	resetTokenRepo authResetTokenRepository
-	publisher      *messaging.Publisher
+type authChangePasswordCodeRepository interface {
+	DeleteUnusedForUser(userID string) error
+	Create(row *models.PasswordChangeCode) error
+	FindValid(userID, plainCode string) (*models.PasswordChangeCode, error)
+	MarkUsed(id string) error
 }
 
-func NewAuthService(userRepo authUserRepository, sessionRepo authSessionRepository, resetTokenRepo authResetTokenRepository) *AuthService {
+type AuthService struct {
+	userRepo            authUserRepository
+	sessionRepo         authSessionRepository
+	resetTokenRepo      authResetTokenRepository
+	changePwdCodeRepo   authChangePasswordCodeRepository
+	publisher           *messaging.Publisher
+}
+
+func NewAuthService(userRepo authUserRepository, sessionRepo authSessionRepository, resetTokenRepo authResetTokenRepository, changePwdCodeRepo authChangePasswordCodeRepository) *AuthService {
 	return &AuthService{
-		userRepo:       userRepo,
-		sessionRepo:    sessionRepo,
-		resetTokenRepo: resetTokenRepo,
+		userRepo:          userRepo,
+		sessionRepo:       sessionRepo,
+		resetTokenRepo:    resetTokenRepo,
+		changePwdCodeRepo: changePwdCodeRepo,
 	}
 }
 
@@ -162,7 +177,29 @@ func (s *AuthService) Login(req *models.LoginRequest) (*models.AuthResponse, err
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	_ = s.sessionRepo.DeleteByUserID(user.ID)
+	session, err := s.getOrCreateSession(user)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.AuthResponse{
+		UserID:      user.ID,
+		AccessToken: session.Token,
+	}, nil
+}
+
+func (s *AuthService) getOrCreateSession(user *models.User) (*models.Session, error) {
+	if session, err := s.sessionRepo.GetActiveByUserID(user.ID); err == nil {
+		return session, nil
+	}
+	if session, err := s.sessionRepo.GetLatestByUserID(user.ID); err == nil {
+		expires := time.Now().Add(24 * time.Hour)
+		if err := s.sessionRepo.RenewExpiry(session.ID, expires); err != nil {
+			return nil, fmt.Errorf("failed to renew session: %w", err)
+		}
+		session.ExpiresAt = expires
+		return session, nil
+	}
 
 	token := generateToken(user.ID, user.Email)
 	session := &models.Session{
@@ -171,15 +208,10 @@ func (s *AuthService) Login(req *models.LoginRequest) (*models.AuthResponse, err
 		Token:     token,
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
-
 	if err := s.sessionRepo.Create(session); err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
-
-	return &models.AuthResponse{
-		UserID:      user.ID,
-		AccessToken: token,
-	}, nil
+	return session, nil
 }
 
 func (s *AuthService) ValidateToken(token string) (*models.User, error) {
@@ -199,7 +231,7 @@ func (s *AuthService) ValidateToken(token string) (*models.User, error) {
 }
 
 func (s *AuthService) Logout(token string) error {
-	return s.sessionRepo.DeleteByToken(token)
+	return nil
 }
 
 func (s *AuthService) ForgotPassword(email string) (string, error) {
@@ -321,6 +353,81 @@ func (s *AuthService) ChangePassword(userID, oldPassword, newPassword string) er
 	return nil
 }
 
+func randomSixDigitCode() (string, error) {
+	buf := make([]byte, 4)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	n := uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 | uint32(buf[3])
+	return fmt.Sprintf("%06d", n%1000000), nil
+}
+
+func (s *AuthService) SendChangePasswordVerificationCode(accessToken string) error {
+	if s.changePwdCodeRepo == nil {
+		return fmt.Errorf("verification unavailable")
+	}
+	user, err := s.ValidateToken(accessToken)
+	if err != nil {
+		return err
+	}
+	code, err := randomSixDigitCode()
+	if err != nil {
+		return err
+	}
+	_ = s.changePwdCodeRepo.DeleteUnusedForUser(user.ID)
+	row := &models.PasswordChangeCode{
+		ID:        generateID(),
+		UserID:    user.ID,
+		Code:      code,
+		ExpiresAt: time.Now().Add(15 * time.Minute),
+	}
+	if err := s.changePwdCodeRepo.Create(row); err != nil {
+		return err
+	}
+	return usecase.SendPasswordChangeVerificationEmail(user.Email, code)
+}
+
+func (s *AuthService) ConfirmChangePasswordWithCode(accessToken, plainCode, newPassword string) error {
+	if s.changePwdCodeRepo == nil {
+		return fmt.Errorf("verification unavailable")
+	}
+	user, err := s.ValidateToken(accessToken)
+	if err != nil {
+		return err
+	}
+	if len(newPassword) < 6 {
+		return fmt.Errorf("password must be at least 6 characters")
+	}
+	row, err := s.changePwdCodeRepo.FindValid(user.ID, strings.TrimSpace(plainCode))
+	if err != nil {
+		return err
+	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password")
+	}
+	if err := s.userRepo.UpdatePassword(user.ID, string(hashedPassword)); err != nil {
+		return err
+	}
+	_ = s.changePwdCodeRepo.MarkUsed(row.ID)
+	_ = s.sessionRepo.DeleteByUserID(user.ID)
+
+	go func(email string) {
+		if err := usecase.SendPasswordChangedEmail(email); err != nil {
+			log.Printf("[SMTP] password changed email failed for %s: %v", email, err)
+		}
+	}(user.Email)
+
+	if s.publisher != nil {
+		s.publisher.PublishPasswordChanged(messaging.AuthEvent{
+			UserID: user.ID,
+			Email:  user.Email,
+			Role:   user.Role,
+		})
+	}
+	return nil
+}
+
 func isValidEmail(email string) bool {
 	pattern := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
 	matched, _ := regexp.MatchString(pattern, email)
@@ -328,8 +435,12 @@ func isValidEmail(email string) bool {
 }
 
 func generateID() string {
-	return strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
+
+
 
 func generateToken(userID, email string) string {
 	data := fmt.Sprintf("%s:%s:%d", userID, email, time.Now().UnixNano())
