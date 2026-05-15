@@ -92,6 +92,49 @@ func (m *mockAuthSessionRepo) GetByToken(token string) (*models.Session, error) 
 	return nil, fmt.Errorf("session not found or expired")
 }
 
+func (m *mockAuthSessionRepo) GetActiveByUserID(userID string) (*models.Session, error) {
+	now := time.Now()
+	var best *models.Session
+	for i := range m.sessions {
+		if m.sessions[i].UserID == userID && m.sessions[i].ExpiresAt.After(now) {
+			if best == nil || m.sessions[i].ExpiresAt.After(best.ExpiresAt) {
+				cp := m.sessions[i]
+				best = &cp
+			}
+		}
+	}
+	if best == nil {
+		return nil, fmt.Errorf("session not found or expired")
+	}
+	return best, nil
+}
+
+func (m *mockAuthSessionRepo) GetLatestByUserID(userID string) (*models.Session, error) {
+	var best *models.Session
+	for i := range m.sessions {
+		if m.sessions[i].UserID == userID {
+			if best == nil || m.sessions[i].CreatedAt.After(best.CreatedAt) {
+				cp := m.sessions[i]
+				best = &cp
+			}
+		}
+	}
+	if best == nil {
+		return nil, fmt.Errorf("session not found")
+	}
+	return best, nil
+}
+
+func (m *mockAuthSessionRepo) RenewExpiry(sessionID string, expiresAt time.Time) error {
+	for i := range m.sessions {
+		if m.sessions[i].ID == sessionID {
+			m.sessions[i].ExpiresAt = expiresAt
+			return nil
+		}
+	}
+	return fmt.Errorf("session not found")
+}
+
 func (m *mockAuthSessionRepo) DeleteByToken(token string) error {
 	var kept []models.Session
 	for _, s := range m.sessions {
@@ -144,6 +187,18 @@ func (m *mockAuthResetRepo) MarkAsUsed(token string) error {
 	return fmt.Errorf("not found")
 }
 
+type mockChangePwdCodeRepo struct{}
+
+func (m *mockChangePwdCodeRepo) DeleteUnusedForUser(userID string) error { return nil }
+
+func (m *mockChangePwdCodeRepo) Create(row *models.PasswordChangeCode) error { return nil }
+
+func (m *mockChangePwdCodeRepo) FindValid(userID, plainCode string) (*models.PasswordChangeCode, error) {
+	return nil, fmt.Errorf("invalid or expired code")
+}
+
+func (m *mockChangePwdCodeRepo) MarkUsed(id string) error { return nil }
+
 func clearSMTP(t *testing.T) {
 	t.Helper()
 	t.Setenv("SMTP_USERNAME", "")
@@ -152,7 +207,7 @@ func clearSMTP(t *testing.T) {
 
 func TestRegister_InvalidEmail(t *testing.T) {
 	clearSMTP(t)
-	svc := NewAuthService(&mockAuthUserRepo{}, &mockAuthSessionRepo{}, &mockAuthResetRepo{})
+	svc := NewAuthService(&mockAuthUserRepo{}, &mockAuthSessionRepo{}, &mockAuthResetRepo{}, &mockChangePwdCodeRepo{})
 	_, err := svc.Register(&models.RegisterRequest{
 		Email:    "bad",
 		Password: "secret1",
@@ -166,7 +221,7 @@ func TestRegister_Success(t *testing.T) {
 	clearSMTP(t)
 	users := &mockAuthUserRepo{}
 	sessions := &mockAuthSessionRepo{}
-	svc := NewAuthService(users, sessions, &mockAuthResetRepo{})
+	svc := NewAuthService(users, sessions, &mockAuthResetRepo{}, &mockChangePwdCodeRepo{})
 	resp, err := svc.Register(&models.RegisterRequest{
 		Email:    "u@example.com",
 		Password: "secret1",
@@ -192,7 +247,7 @@ func TestLogin_InvalidPassword(t *testing.T) {
 	users := &mockAuthUserRepo{users: []models.User{{
 		ID: "id1", Email: "e@e.com", Password: string(hash),
 	}}}
-	svc := NewAuthService(users, &mockAuthSessionRepo{}, &mockAuthResetRepo{})
+	svc := NewAuthService(users, &mockAuthSessionRepo{}, &mockAuthResetRepo{}, &mockChangePwdCodeRepo{})
 	_, err := svc.Login(&models.LoginRequest{Email: "e@e.com", Password: "wrong"})
 	if err == nil {
 		t.Fatal("expected error")
@@ -206,7 +261,7 @@ func TestLogin_Success(t *testing.T) {
 		ID: "id1", Email: "e@e.com", Password: string(hash),
 	}}}
 	sessions := &mockAuthSessionRepo{}
-	svc := NewAuthService(users, sessions, &mockAuthResetRepo{})
+	svc := NewAuthService(users, sessions, &mockAuthResetRepo{}, &mockChangePwdCodeRepo{})
 	resp, err := svc.Login(&models.LoginRequest{Email: "e@e.com", Password: "right"})
 	if err != nil {
 		t.Fatal(err)
@@ -219,9 +274,32 @@ func TestLogin_Success(t *testing.T) {
 	}
 }
 
+func TestLogin_ReusesExistingToken(t *testing.T) {
+	clearSMTP(t)
+	hash, _ := bcrypt.GenerateFromPassword([]byte("right"), bcrypt.DefaultCost)
+	users := &mockAuthUserRepo{users: []models.User{{
+		ID: "id1", Email: "e@e.com", Password: string(hash),
+	}}}
+	sessions := &mockAuthSessionRepo{sessions: []models.Session{{
+		ID: "s1", UserID: "id1", Token: "existing-token",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}}}
+	svc := NewAuthService(users, sessions, &mockAuthResetRepo{}, &mockChangePwdCodeRepo{})
+	resp, err := svc.Login(&models.LoginRequest{Email: "e@e.com", Password: "right"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.AccessToken != "existing-token" {
+		t.Fatalf("token %q", resp.AccessToken)
+	}
+	if len(sessions.sessions) != 1 {
+		t.Fatalf("sessions %d", len(sessions.sessions))
+	}
+}
+
 func TestForgotPassword_UnknownEmail(t *testing.T) {
 	clearSMTP(t)
-	svc := NewAuthService(&mockAuthUserRepo{}, &mockAuthSessionRepo{}, &mockAuthResetRepo{})
+	svc := NewAuthService(&mockAuthUserRepo{}, &mockAuthSessionRepo{}, &mockAuthResetRepo{}, &mockChangePwdCodeRepo{})
 	tok, err := svc.ForgotPassword("nobody@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +315,7 @@ func TestChangePassword_WrongOld(t *testing.T) {
 	users := &mockAuthUserRepo{users: []models.User{{
 		ID: "id1", Email: "e@e.com", Password: string(hash),
 	}}}
-	svc := NewAuthService(users, &mockAuthSessionRepo{}, &mockAuthResetRepo{})
+	svc := NewAuthService(users, &mockAuthSessionRepo{}, &mockAuthResetRepo{}, &mockChangePwdCodeRepo{})
 	err := svc.ChangePassword("id1", "nope", "newpass1")
 	if err == nil {
 		t.Fatal("expected error")
@@ -257,7 +335,7 @@ func TestResetPassword_Success(t *testing.T) {
 	sessions := &mockAuthSessionRepo{sessions: []models.Session{{
 		UserID: "id1", Token: "sess1",
 	}}}
-	svc := NewAuthService(users, sessions, resets)
+	svc := NewAuthService(users, sessions, resets, &mockChangePwdCodeRepo{})
 	if err := svc.ResetPassword("tok1", "newpass1"); err != nil {
 		t.Fatal(err)
 	}

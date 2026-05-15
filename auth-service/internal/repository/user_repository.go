@@ -145,3 +145,35 @@ func (r *UserRepository) UsernameExists(username string) (bool, error) {
 	err := database.DB.QueryRow(query, username).Scan(&exists)
 	return exists, err
 }
+
+func (r *UserRepository) AddBalance(userID string, delta float64) error {
+	res, err := database.DB.Exec(
+		`UPDATE users SET balance = balance + $1, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $2 AND is_deleted = false`,
+		delta, userID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+func (r *UserRepository) DeductBalance(userID string, delta float64) error {
+	res, err := database.DB.Exec(
+		`UPDATE users SET balance = balance - $1, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $2 AND is_deleted = false AND balance >= $1`,
+		delta, userID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("insufficient balance or user not found")
+	}
+	return nil
+}

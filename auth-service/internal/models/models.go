@@ -34,6 +34,15 @@ type PasswordResetToken struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+type PasswordChangeCode struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"userId"`
+	Code      string    `json:"code"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	Used      bool      `json:"used"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 type RegisterRequest struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`

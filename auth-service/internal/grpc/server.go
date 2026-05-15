@@ -24,9 +24,10 @@ func NewAuthServer() *AuthServer {
 	userRepo := repository.NewUserRepository()
 	sessionRepo := repository.NewSessionRepository()
 	resetTokenRepo := repository.NewResetTokenRepository()
+	changePwdRepo := repository.NewChangePasswordCodeRepository()
 
 	return &AuthServer{
-		authService: service.NewAuthService(userRepo, sessionRepo, resetTokenRepo),
+		authService: service.NewAuthService(userRepo, sessionRepo, resetTokenRepo, changePwdRepo),
 		userService: service.NewUserService(userRepo),
 	}
 }

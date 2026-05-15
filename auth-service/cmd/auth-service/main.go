@@ -12,6 +12,7 @@ import (
 
 	"github.com/final-ap2-course2/auth-service/internal/database"
 	grpcserver "github.com/final-ap2-course2/auth-service/internal/grpc"
+	"github.com/final-ap2-course2/auth-service/internal/messaging"
 	"github.com/final-ap2-course2/auth-service/internal/models"
 	"github.com/final-ap2-course2/auth-service/internal/repository"
 	"github.com/final-ap2-course2/auth-service/internal/service"
@@ -40,7 +41,7 @@ func main() {
 	natsURL := getenv("NATS_URL", "nats://localhost:4222")
 	var nc *nats.Conn
 	var natsErr error
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		nc, natsErr = nats.Connect(natsURL)
 		if natsErr == nil {
 			break
@@ -48,6 +49,7 @@ func main() {
 		log.Printf("[NATS] attempt %d failed — retrying in 2s: %v", i+1, natsErr)
 		time.Sleep(2 * time.Second)
 	}
+
 	if natsErr != nil {
 		log.Printf("[NATS] unavailable: %v (continuing without NATS)", natsErr)
 		nc = nil
@@ -100,10 +102,25 @@ func startHTTPServer(nc *nats.Conn) {
 	userRepo := repository.NewUserRepository()
 	sessionRepo := repository.NewSessionRepository()
 	resetTokenRepo := repository.NewResetTokenRepository()
+	changePwdRepo := repository.NewChangePasswordCodeRepository()
 
-	authService := service.NewAuthService(userRepo, sessionRepo, resetTokenRepo)
+	authService := service.NewAuthService(userRepo, sessionRepo, resetTokenRepo, changePwdRepo)
 	authService.SetPublisher(nc)
 	userService := service.NewUserService(userRepo)
+
+	if nc != nil {
+		sub := messaging.NewSubscriber(nc, userService)
+		if err := sub.Subscribe(); err != nil {
+			log.Printf("[NATS] subscribe error: %v", err)
+		} else {
+			defer sub.Drain()
+		}
+		if js, err := nc.JetStream(); err != nil {
+			log.Printf("[NATS] JetStream error: %v", err)
+		} else if _, err := messaging.StartTopUpConsumer(js, service.NewQueuedTopUpHandler(authService, userService)); err != nil {
+			log.Printf("[NATS] top-up consumer error: %v", err)
+		}
+	}
 
 	mux := http.NewServeMux()
 
@@ -146,6 +163,11 @@ func startHTTPServer(nc *nats.Conn) {
 			return
 		}
 
+		if len(token) > 7 && token[:7] == "Bearer " {
+			token = token[7:]
+		}
+
+
 		user, err := authService.ValidateToken(token)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
@@ -160,6 +182,9 @@ func startHTTPServer(nc *nats.Conn) {
 		if token == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token required"})
 			return
+		}
+		if len(token) > 7 && token[:7] == "Bearer " {
+			token = token[7:]
 		}
 
 		if err := authService.Logout(token); err != nil {
@@ -181,12 +206,68 @@ func startHTTPServer(nc *nats.Conn) {
 	})
 
 	mux.HandleFunc("GET /users", func(w http.ResponseWriter, r *http.Request) {
-		users, _, err := userService.ListUsers(1, 100, "")
+		role := r.URL.Query().Get("role")
+		users, _, err := userService.ListUsers(1, 100, role)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusOK, users)
+	})
+
+	mux.HandleFunc("POST /users", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		if token == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token required"})
+			return
+		}
+		actor, err := authService.ValidateToken(token)
+		if err != nil || actor.Role != "admin" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin only"})
+			return
+		}
+		var req service.AdminCreateUserRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		user, err := userService.CreateUserAdmin(&req)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, user)
+	})
+
+	mux.HandleFunc("POST /users/{id}/balance/top-up", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		if token == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token required"})
+			return
+		}
+		actor, err := authService.ValidateToken(token)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+			return
+		}
+		targetID := r.PathValue("id")
+		if actor.ID != targetID && actor.Role != "admin" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
+		var body struct {
+			Amount float64 `json:"amount"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		user, err := userService.TopUpBalance(targetID, body.Amount)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, user)
 	})
 
 	mux.HandleFunc("PUT /users/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +336,43 @@ func startHTTPServer(nc *nats.Conn) {
 		writeJSON(w, http.StatusOK, map[string]string{"message": "password reset"})
 	})
 
+	mux.HandleFunc("POST /auth/change-password/send-code", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		if token == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token required"})
+			return
+		}
+		if err := authService.SendChangePasswordVerificationCode(token); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"message": "verification code sent to your email"})
+	})
+
+	mux.HandleFunc("POST /auth/change-password/confirm", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		if token == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token required"})
+			return
+		}
+		var req struct {
+			Code        string `json:"code"`
+			NewPassword string `json:"newPassword"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		if err := authService.ConfirmChangePasswordWithCode(token, req.Code, req.NewPassword); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"message": "password updated — please sign in again"})
+	})
+
+
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":    "ok",
 			"service":   "auth-service",
@@ -299,4 +416,12 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+func bearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if len(h) > 7 && h[:7] == "Bearer " {
+		return h[7:]
+	}
+	return h
 }

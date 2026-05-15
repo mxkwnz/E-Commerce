@@ -77,6 +77,15 @@ func RunMigrations() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_reset_tokens_token ON password_reset_tokens(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_reset_tokens_user ON password_reset_tokens(user_id)`,
+		`CREATE TABLE IF NOT EXISTS password_change_codes (
+			id VARCHAR(50) PRIMARY KEY,
+			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			code VARCHAR(12) NOT NULL,
+			used BOOLEAN DEFAULT FALSE,
+			expires_at TIMESTAMP NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_pwd_change_user_active ON password_change_codes(user_id) WHERE used = false`,
 	}
 
 	for i, migration := range migrations {
