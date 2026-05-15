@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Account | SNEAKR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css?v=11">
+    <style>
+        .edit-form { display: none; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); }
+        .edit-form.active { display: block; }
+        .pwd-card { display: none; margin-bottom: 1.5rem; padding: 1rem; background: rgba(255,255,255,0.03); border-radius: 10px; border: 1px solid var(--border); }
+        .pwd-card.active { display: block; }
+    </style>
+</head>
+<body>
+    <nav id="nav"></nav>
+
+    <main class="container">
+        <div class="section-title">
+            <h2>My Profile</h2>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 300px 1fr; gap: 4rem; margin-bottom: 4rem;">
+            <div style="background: var(--surface); padding: 2rem; border-radius: 16px; height: fit-content; border: 1px solid var(--border);">
+                <!-- Avatar -->
+                <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 1.75rem; padding-bottom: 1.75rem; border-bottom: 1px solid var(--border);">
+                    <div style="width: 76px; height: 76px; background: linear-gradient(135deg, var(--accent), #ff6b6b); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: 800; margin-bottom: 1rem; box-shadow: 0 0 0 4px rgba(255,51,51,0.15);" id="user-initial">?</div>
+                    <h3 id="user-name" style="margin-bottom: 0.25rem; font-size: 1.1rem;">Loading...</h3>
+                    <p id="user-email" style="color: var(--text-dim); font-size: 0.82rem;">...</p>
+                </div>
+
+                <!-- Balance -->
+                <div style="background: rgba(255,51,51,0.06); border: 1px solid rgba(255,51,51,0.2); border-left: 3px solid var(--accent); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.25rem;">
+                    <div style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 0.35rem;">Account Balance</div>
+                    <div id="user-balance" style="font-size: 1.8rem; font-weight: 800; color: #2ecc71; letter-spacing: -0.5px;">$0.00</div>
+                </div>
+
+                <!-- Top-up Form -->
+                <form id="topup-form" style="margin-bottom: 1.5rem;">
+                    <div style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 0.6rem;">Top Up Balance</div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <div style="position: relative; flex: 1;">
+                            <span style="position: absolute; left: 0.85rem; top: 50%; transform: translateY(-50%); color: var(--text-dim); font-weight: 700; font-size: 0.95rem;">$</span>
+                            <input type="number" id="topup-amount" class="form-control" min="1" step="0.01" placeholder="0.00" style="padding-left: 1.75rem;">
+                        </div>
+                        <button type="submit" class="btn btn-primary" id="topup-btn" style="padding: 0.75rem 1.25rem; white-space: nowrap; border-radius: 10px;">Add</button>
+                    </div>
+                </form>
+
+                <!-- Actions -->
+                <div style="display: flex; flex-direction: column; gap: 0.6rem;">
+                    <button class="btn btn-outline" style="width: 100%;" onclick="toggleEditProfile()">Edit Profile</button>
+                    <button type="button" class="btn btn-outline" style="width: 100%;" onclick="togglePwdCard()">Change Password</button>
+                    <button class="btn btn-outline" style="width: 100%; color: #ff4757; border-color: rgba(255,71,87,0.4); margin-top: 0.4rem;" onclick="state.logout(); window.location.href='index.html'">Sign Out</button>
+                </div>
+
+                <!-- Change Password Card -->
+                <div id="pwd-card" class="pwd-card" style="margin-top: 1.25rem;">
+                    <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 1rem;">We email a verification code to your address on file. Then enter the code and your new password.</p>
+                    <button type="button" class="btn btn-outline" style="width: 100%; margin-bottom: 1rem;" id="pwd-send-code">Send code to email</button>
+                    <form id="pwd-confirm-form">
+                        <div class="form-group">
+                            <label>Code from email</label>
+                            <input type="text" id="pwd-code" class="form-control" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="6-digit code">
+                        </div>
+                        <div class="form-group">
+                            <label>New password</label>
+                            <input type="password" id="pwd-new" class="form-control" minlength="6" autocomplete="new-password">
+                        </div>
+                        <div class="form-group">
+                            <label>Confirm new password</label>
+                            <input type="password" id="pwd-new2" class="form-control" minlength="6" autocomplete="new-password">
+                        </div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%;" id="pwd-confirm-btn">Update password</button>
+                    </form>
+                </div>
+
+                <!-- Edit Profile Form -->
+                <form id="edit-profile-form" class="edit-form">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" id="edit-username" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>First Name</label>
+                        <input type="text" id="edit-first" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>Last Name</label>
+                        <input type="text" id="edit-last" class="form-control">
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width: 100%;" id="save-profile-btn">Save Changes</button>
+                </form>
+            </div>
+            
+            <div>
+                <h3 style="text-transform: uppercase; letter-spacing: 2px; margin-bottom: 2rem;">Order History</h3>
+                <div id="orders-list">Loading orders...</div>
+
+                <h3 style="text-transform: uppercase; letter-spacing: 2px; margin-bottom: 2rem; margin-top: 4rem;">My Favorites</h3>
+                <div class="product-grid" id="favorites-grid" style="margin-bottom: 2rem;">Loading favorites...</div>
+
+                <h3 style="text-transform: uppercase; letter-spacing: 2px; margin-bottom: 2rem; margin-top: 4rem;">My Reviews</h3>
+                <div id="reviews-list">Loading reviews...</div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Product Details Modal -->
+    <div class="modal modal-large" id="product-detail-modal"></div>
+
+    <div class="notification" id="notification"></div>
+
+    <!-- Review Edit Modal -->
+    <div class="overlay" id="overlay"></div>
+    <div class="modal" id="review-modal">
+        <h3 style="margin-bottom: 2rem; text-align: center; font-size: 1.5rem;">Edit Review</h3>
+        <form id="edit-review-form">
+            <input type="hidden" id="edit-review-id">
+            <div class="form-group">
+                <label>Rating</label>
+                <div class="star-rating" id="edit-star-rating">
+                    <span class="star active" data-value="1">★</span>
+                    <span class="star active" data-value="2">★</span>
+                    <span class="star active" data-value="3">★</span>
+                    <span class="star active" data-value="4">★</span>
+                    <span class="star active" data-value="5">★</span>
+                </div>
+                <input type="hidden" id="edit-review-rating" value="5">
+            </div>
+            <div class="form-group">
+                <label>Comment</label>
+                <textarea id="edit-review-comment" rows="4" class="form-control" required></textarea>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+                <button type="button" class="btn btn-outline" style="flex: 1;" onclick="closeReviewModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary" style="flex: 1;">Save</button>
+            </div>
+        </form>
+    </div>
+
+    <script src="js/api.js?v=12"></script>
+    <script src="js/state.js?v=12"></script>
+    <script src="js/components.js?v=12"></script>
+    <script>
+        // Star Rating Logic
+        document.getElementById('edit-star-rating').addEventListener('click', (e) => {
+            if (e.target.classList.contains('star')) {
+                const val = parseInt(e.target.dataset.value);
+                document.getElementById('edit-review-rating').value = val;
+                const stars = document.querySelectorAll('#edit-star-rating .star');
+                stars.forEach(s => {
+                    const sVal = parseInt(s.dataset.value);
+                    if (sVal <= val) s.classList.add('active');
+                    else s.classList.remove('active');
+                });
+            }
+        });
+
+        function toggleEditProfile() {
+            document.getElementById('edit-profile-form').classList.toggle('active');
+        }
+
+        function togglePwdCard() {
+            document.getElementById('pwd-card').classList.toggle('active');
+        }
+
+        function openReviewModal(id, rating, comment) {
+            document.getElementById('edit-review-id').value = id;
+            document.getElementById('edit-review-rating').value = rating;
+            document.getElementById('edit-review-comment').value = comment;
+            
+            // Sync stars
+            const stars = document.querySelectorAll('#edit-star-rating .star');
+            stars.forEach(s => {
+                if (parseInt(s.dataset.value) <= rating) s.classList.add('active');
+                else s.classList.remove('active');
+            });
+
+            document.getElementById('review-modal').classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+        }
+
+        function closeReviewModal() {
+            document.getElementById('review-modal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        }
+
+        window.openProductDetail = async (productId) => {
+            const modal = document.getElementById('product-detail-modal');
+            const overlay = document.getElementById('overlay');
+            modal.innerHTML = '<div style="padding: 4rem; color: var(--text-dim); text-align: center; width: 100%;">Loading details...</div>';
+            modal.classList.add('active');
+            overlay.classList.add('active');
+
+            try {
+                const p = await api.products.get(productId);
+                try {
+                    const res = await api.reviews.listByProduct(p.id);
+                    p.reviews = Array.isArray(res) ? res : (res && res.reviews ? res.reviews : []);
+                } catch (e) { p.reviews = []; }
+                
+                p.isFavorite = state.isFavorite(p.id);
+                modal.innerHTML = components.ProductDetailModal(p);
+            } catch (err) {
+                modal.innerHTML = '<div style="padding: 4rem; color: var(--accent); text-align: center; width: 100%;">Failed to load product details.</div>';
+            }
+        };
+
+        window.closeProductDetail = () => {
+            document.getElementById('product-detail-modal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        };
+
+        // Load Reviews
+        window.loadReviews = async function() {
+            try {
+                const reviews = await api.reviews.listByUser('me');
+                const list = document.getElementById('reviews-list');
+                if (!list) return;
+                if (!reviews || reviews.length === 0) {
+                    list.innerHTML = '<p style="color: var(--text-dim); background: var(--surface); padding: 2rem; border-radius: 12px; border: 1px solid var(--border); text-align: center;">You haven\'t left any reviews yet.</p>';
+                    return;
+                }
+                list.innerHTML = reviews.map(r => `
+                    <div style="background: var(--surface); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1.5rem;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+                            <div style="color: var(--accent); font-weight: 800;">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</div>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <button class="btn btn-outline" style="padding: 0.25rem 0.75rem; font-size: 0.8rem;" onclick="openReviewModal('${r.id}', ${r.rating}, '${r.comment.replace(/'/g, "\\'")}')">Edit</button>
+                                <button class="btn btn-outline" style="padding: 0.25rem 0.75rem; font-size: 0.8rem; color: #ff4757; border-color: rgba(255,71,87,0.3);" onclick="window.deleteReview('${r.id}', '${r.productId}')">Delete</button>
+                            </div>
+                        </div>
+                        <p style="color: var(--text);">${r.comment}</p>
+                        <div style="color: var(--text-dim); font-size: 0.85rem; margin-top: 1rem;">${new Date(r.createdAt).toLocaleString()}</div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                const list = document.getElementById('reviews-list');
+                if (list) list.innerHTML = '<p style="color: var(--accent)">Failed to load reviews.</p>';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            async function loadAccountFavorites() {
+                const grid = document.getElementById('favorites-grid');
+                if (!grid || !state.user) return;
+                grid.innerHTML = '<p style="color: var(--text-dim);">Loading favorites...</p>';
+                try {
+                    const data = await api.favorites.list();
+                    const ids = (data && data.productIds) ? data.productIds : [];
+                    // Sync state too
+                    state.favoriteProductIds = new Set(ids);
+                    if (ids.length === 0) {
+                        grid.innerHTML = '<p style="color: var(--text-dim); background: var(--surface); padding: 2rem; border-radius: 12px; border: 1px solid var(--border); text-align: center;">You have no saved favorites yet. Tap ♥ on a product to save it.</p>';
+                        return;
+                    }
+                    const products = await Promise.all(ids.map(async (id) => {
+                        try { return await api.products.get(id); }
+                        catch { return null; }
+                    }));
+                    const ok = products.filter(Boolean);
+                    for (const p of ok) {
+                        try {
+                            const res = await api.reviews.listByProduct(p.id);
+                            p.reviews = Array.isArray(res) ? res : (res && res.reviews ? res.reviews : []);
+                        } catch { p.reviews = []; }
+                        p.isFavorite = true;
+                    }
+                    if (ok.length === 0) {
+                        grid.innerHTML = '<p style="color: var(--text-dim); background: var(--surface); padding: 2rem; border-radius: 12px; border: 1px solid var(--border); text-align: center;">Could not load favorite products.</p>';
+                        return;
+                    }
+                    grid.innerHTML = ok.map(p => components.ProductCard(p)).join('');
+                } catch (err) {
+                    console.error('[favorites] load error:', err);
+                    grid.innerHTML = `<p style="color: var(--accent); background: var(--surface); padding: 2rem; border-radius: 12px; border: 1px solid var(--border); text-align: center;">Failed to load favorites: ${err.message || 'unknown error'}</p>`;
+                }
+            }
+
+            state.subscribe(() => {
+                document.getElementById('nav').innerHTML = components.Navbar(state);
+            });
+            window.refreshAccountFavorites = loadAccountFavorites;
+            await state.init();
+            
+            if (!state.user) {
+                window.location.href = 'auth.html';
+                return;
+            }
+
+            document.getElementById('pwd-send-code').addEventListener('click', async () => {
+                const btn = document.getElementById('pwd-send-code');
+                btn.disabled = true;
+                try {
+                    await api.auth.changePasswordSendCode();
+                    showToast('Check your email for the verification code.', 'success');
+                } catch (err) {
+                    showToast(err.message || 'Could not send code', 'error');
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+
+            document.getElementById('pwd-confirm-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const code = document.getElementById('pwd-code').value.trim();
+                const pw = document.getElementById('pwd-new').value;
+                const pw2 = document.getElementById('pwd-new2').value;
+                if (!code) {
+                    showToast('Enter the code from your email.', 'error');
+                    return;
+                }
+                if (pw.length < 6) {
+                    showToast('Password must be at least 6 characters.', 'error');
+                    return;
+                }
+                if (pw !== pw2) {
+                    showToast('Passwords do not match.', 'error');
+                    return;
+                }
+                const btn = document.getElementById('pwd-confirm-btn');
+                btn.disabled = true;
+                btn.innerText = 'Updating...';
+                try {
+                    await api.auth.changePasswordConfirm(code, pw);
+                    showToast('Password updated. Please sign in again.', 'success');
+                    state.logout();
+                    setTimeout(() => { window.location.href = 'auth.html'; }, 800);
+                } catch (err) {
+                    showToast(err.message || 'Update failed', 'error');
+                } finally {
+                    btn.disabled = false;
+                    btn.innerText = 'Update password';
+                }
+            });
+
+            // Populate User Info
+            document.getElementById('user-initial').innerText = (state.user.username || state.user.email).charAt(0).toUpperCase();
+            document.getElementById('user-name').innerText = state.user.username || 'Valued Customer';
+            document.getElementById('user-email').innerText = state.user.email;
+
+            function renderBalance() {
+                const bal = typeof state.user.balance === 'number' ? state.user.balance : parseFloat(state.user.balance) || 0;
+                document.getElementById('user-balance').innerText = '$' + bal.toFixed(2);
+                document.getElementById('user-balance').style.color = bal <= 0 ? '#ff4757' : '#2ecc71';
+            }
+            renderBalance();
+
+            document.getElementById('topup-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const btn = document.getElementById('topup-btn');
+                const amt = parseFloat(document.getElementById('topup-amount').value);
+                if (!amt || amt <= 0) {
+                    showToast('Enter a positive amount.', 'error');
+                    return;
+                }
+                btn.disabled = true;
+                btn.innerText = '...';
+                try {
+                    const updated = await api.users.topUpBalance(state.user.id, amt);
+                    if (updated && updated.status === 'queued') {
+                        showToast(updated.message || 'Top-up queued; balance will update when auth-service is back.', 'success');
+                    } else {
+                        state.user = { ...state.user, ...updated };
+                        renderBalance();
+                        showToast('Balance updated.', 'success');
+                    }
+                    document.getElementById('topup-amount').value = '';
+                } catch (err) {
+                    showToast('Top-up failed: ' + err.message, 'error');
+                } finally {
+                    btn.disabled = false;
+                    btn.innerText = 'Add';
+                }
+            });
+            
+            document.getElementById('edit-username').value = state.user.username || '';
+            document.getElementById('edit-first').value = state.user.firstName || '';
+            document.getElementById('edit-last').value = state.user.lastName || '';
+
+            // Handle Profile Edit
+            document.getElementById('edit-profile-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const btn = document.getElementById('save-profile-btn');
+                btn.innerText = 'Saving...';
+                try {
+                    const updated = await api.users.update(state.user.id, {
+                        username: document.getElementById('edit-username').value,
+                        firstName: document.getElementById('edit-first').value,
+                        lastName: document.getElementById('edit-last').value
+                    });
+                    state.user = updated;
+                    document.getElementById('user-name').innerText = updated.username || 'Valued Customer';
+                    showToast('Profile updated!', 'success');
+                    toggleEditProfile();
+                } catch (err) {
+                    showToast('Failed to update profile', 'error');
+                } finally {
+                    btn.innerText = 'Save Changes';
+                }
+            };
+
+            // Handle Review Edit
+            document.getElementById('edit-review-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const id = document.getElementById('edit-review-id').value;
+                const rating = parseInt(document.getElementById('edit-review-rating').value);
+                const comment = document.getElementById('edit-review-comment').value;
+                try {
+                    await api.reviews.update(id, rating, comment);
+                    showToast('Review updated!', 'success');
+                    closeReviewModal();
+                    loadReviews(); // Reload
+                } catch (err) {
+                    showToast('Failed to update review: ' + err.message, 'error');
+                }
+            };
+
+            // Load Orders
+            try {
+                const orders = await api.orders.list();
+                const list = document.getElementById('orders-list');
+                if (!orders || orders.length === 0) {
+                    list.innerHTML = '<p style="color: var(--text-dim); background: var(--surface); padding: 2rem; border-radius: 12px; border: 1px solid var(--border); text-align: center;">You haven\'t placed any orders yet.</p>';
+                } else {
+                    list.innerHTML = orders.map(o => `
+                        <div style="background: var(--surface); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-weight: 800; font-size: 1.2rem; margin-bottom: 0.5rem">Order #${o.id.substring(0, 8)}</div>
+                                <div style="color: var(--text-dim); font-size: 0.85rem">${new Date(o.createdAt).toLocaleString()}</div>
+                            </div>
+                            <div style="text-align: right">
+                                <div class="product-price" style="margin-bottom: 0.5rem">$${o.totalAmount.toFixed(2)}</div>
+                                <span style="display: inline-block; padding: 0.25rem 0.75rem; background: ${o.status === 'confirmed' ? 'rgba(46, 204, 113, 0.1)' : 'rgba(255, 71, 87, 0.1)'}; color: ${o.status === 'confirmed' ? '#2ecc71' : 'var(--accent)'}; border-radius: 20px; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">${o.status}</span>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+            } catch (err) { 
+                document.getElementById('orders-list').innerHTML = '<p style="color: var(--accent)">Failed to load orders.</p>';
+            }
+
+            loadReviews();
+            loadAccountFavorites();
+        });
+    </script>
+</body>
+</html>

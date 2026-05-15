@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login / Register | SNEAKR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css?v=12">
+    <style>
+        body { display: flex; flex-direction: column; min-height: 100vh; }
+        .auth-wrapper {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 4rem 1rem;
+        }
+        .auth-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 3rem;
+            width: 100%;
+            max-width: 440px;
+        }
+        .auth-card h2 {
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+        .auth-card .form-group { margin-bottom: 1.35rem; }
+        .auth-card .form-group label { margin-bottom: 0.55rem; }
+        .auth-card .form-control {
+            width: 100%;
+            background: #fff;
+            color: #111;
+            border: 1px solid rgba(0, 0, 0, 0.12);
+        }
+        .auth-card .form-control::placeholder { color: #888; }
+        .auth-card .form-control:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(255, 51, 51, 0.12);
+        }
+        .tab-switch {
+            display: flex;
+            gap: 0;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .tab-switch button {
+            flex: 1;
+            padding: 0.9rem 0.75rem;
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.2s;
+        }
+        .tab-switch button.active {
+            background: var(--accent);
+            color: #fff;
+        }
+        .err { color: #ff4757; font-size: 0.9rem; margin-bottom: 1rem; text-align: center; min-height: 1.2rem; }
+        .auth-card .btn-primary { margin-top: 0.5rem; border-radius: 10px; padding: 1.05rem 2rem; }
+        .forgot-link {
+            display: block;
+            text-align: right;
+            font-size: 0.82rem;
+            color: var(--accent);
+            margin-top: -0.75rem;
+            margin-bottom: 1.2rem;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .forgot-link:hover { text-decoration: underline; }
+        .back-link {
+            display: block;
+            text-align: center;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            margin-top: 1rem;
+            cursor: pointer;
+        }
+        .back-link:hover { color: var(--accent); }
+        .success-msg { color: #2ecc71; font-size: 0.9rem; margin-bottom: 1rem; text-align: center; min-height: 1.2rem; }
+    </style>
+</head>
+<body>
+    <nav id="nav"></nav>
+
+    <div class="auth-wrapper">
+        <div class="auth-card">
+            <h2 id="auth-title">Welcome</h2>
+            <div class="tab-switch">
+                <button id="tab-login" class="active" onclick="switchTab('login')">Login</button>
+                <button id="tab-register" onclick="switchTab('register')">Register</button>
+            </div>
+            <div id="err-msg" class="err"></div>
+
+            <!-- Login Form -->
+            <form id="login-form">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="login-email" class="form-control" placeholder="you@example.com" required autocomplete="email">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="login-password" class="form-control" placeholder="••••••••" required autocomplete="current-password">
+                </div>
+                <a class="forgot-link" id="forgot-link" onclick="switchTab('forgot')">Forgot password?</a>
+                <button type="submit" class="btn btn-primary" style="width:100%;" id="login-btn">Login</button>
+            </form>
+
+            <!-- Forgot Password Form -->
+            <form id="forgot-form" style="display:none">
+                <p style="color:var(--text-dim);font-size:0.9rem;margin-bottom:1.5rem;text-align:center;">Enter your email and we'll send you a reset link.</p>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="forgot-email" class="form-control" placeholder="you@example.com" required autocomplete="email">
+                </div>
+                <div id="forgot-success" class="success-msg" style="display:none;"></div>
+                <button type="submit" class="btn btn-primary" style="width:100%;" id="forgot-btn">Send Reset Link</button>
+                <span class="back-link" onclick="switchTab('login')">← Back to login</span>
+            </form>
+
+            <!-- Reset Password Form (shown when ?token= is in URL) -->
+            <form id="reset-form" style="display:none">
+                <p style="color:var(--text-dim);font-size:0.9rem;margin-bottom:1.5rem;text-align:center;">Enter your new password below.</p>
+                <div class="form-group">
+                    <label>New Password</label>
+                    <input type="password" id="reset-password" class="form-control" placeholder="min 6 chars" minlength="6" required autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label>Confirm Password</label>
+                    <input type="password" id="reset-password2" class="form-control" placeholder="••••••••" minlength="6" required autocomplete="new-password">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width:100%;" id="reset-btn">Reset Password</button>
+                <span class="back-link" onclick="switchTab('login')">← Back to login</span>
+            </form>
+
+            <!-- Register Form -->
+            <form id="register-form" style="display:none">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="reg-username" class="form-control" placeholder="sneakerlover123" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="reg-email" class="form-control" placeholder="you@example.com" required autocomplete="email">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="reg-password" class="form-control" placeholder="min 6 chars" required autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label>First Name</label>
+                    <input type="text" id="reg-first" class="form-control" placeholder="John" autocomplete="given-name">
+                </div>
+                <div class="form-group">
+                    <label>Last Name</label>
+                    <input type="text" id="reg-last" class="form-control" placeholder="Doe" autocomplete="family-name">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width:100%;" id="reg-btn">Create Account</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="notification" id="notification"></div>
+
+    <script src="js/api.js?v=12"></script>
+    <script src="js/state.js?v=12"></script>
+    <script src="js/components.js?v=12"></script>
+    <script>
+        function switchTab(tab) {
+            document.getElementById('err-msg').innerText = '';
+            const loginForm  = document.getElementById('login-form');
+            const regForm    = document.getElementById('register-form');
+            const forgotForm = document.getElementById('forgot-form');
+            const resetForm  = document.getElementById('reset-form');
+            const tabSwitch  = document.querySelector('.tab-switch');
+            // Hide all
+            loginForm.style.display  = 'none';
+            regForm.style.display    = 'none';
+            forgotForm.style.display = 'none';
+            resetForm.style.display  = 'none';
+            if (tab === 'login') {
+                loginForm.style.display = '';
+                document.getElementById('tab-login').classList.add('active');
+                document.getElementById('tab-register').classList.remove('active');
+                document.getElementById('auth-title').innerText = 'Welcome Back';
+                tabSwitch.style.display = '';
+            } else if (tab === 'register') {
+                regForm.style.display = '';
+                document.getElementById('tab-login').classList.remove('active');
+                document.getElementById('tab-register').classList.add('active');
+                document.getElementById('auth-title').innerText = 'Create Account';
+                tabSwitch.style.display = '';
+            } else if (tab === 'forgot') {
+                forgotForm.style.display = '';
+                document.getElementById('auth-title').innerText = 'Forgot Password';
+                tabSwitch.style.display = 'none';
+            } else if (tab === 'reset') {
+                resetForm.style.display = '';
+                document.getElementById('auth-title').innerText = 'Reset Password';
+                tabSwitch.style.display = 'none';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            state.subscribe(() => {
+                document.getElementById('nav').innerHTML = components.Navbar(state);
+                // If user is now logged in, redirect to home
+                if (state.user) {
+                    window.location.href = 'index.html';
+                }
+            });
+            await state.init();
+
+            // If already logged in, go home immediately
+            if (state.user) {
+                window.location.href = 'index.html';
+                return;
+            }
+            document.getElementById('nav').innerHTML = components.Navbar(state);
+
+            // Check for tab / token params
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('token')) {
+                switchTab('reset');
+            } else if (params.get('tab') === 'register') {
+                switchTab('register');
+            } else {
+                switchTab('login');
+            }
+        });
+
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('login-btn');
+            const errEl = document.getElementById('err-msg');
+            errEl.innerText = '';
+            btn.disabled = true;
+            btn.innerText = 'Logging in...';
+            try {
+                await state.login(
+                    document.getElementById('login-email').value,
+                    document.getElementById('login-password').value
+                );
+                // state.notify() triggers redirect in subscribe
+            } catch (err) {
+                errEl.innerText = err.message || 'Login failed';
+                btn.disabled = false;
+                btn.innerText = 'Login';
+            }
+        });
+
+        document.getElementById('register-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('reg-btn');
+            const errEl = document.getElementById('err-msg');
+            errEl.innerText = '';
+            btn.disabled = true;
+            btn.innerText = 'Creating account...';
+            try {
+                await state.register({
+                    username: document.getElementById('reg-username').value,
+                    email:    document.getElementById('reg-email').value,
+                    password: document.getElementById('reg-password').value,
+                    firstName: document.getElementById('reg-first').value,
+                    lastName:  document.getElementById('reg-last').value
+                });
+                // state.notify() triggers redirect in subscribe
+            } catch (err) {
+                errEl.innerText = err.message || 'Registration failed';
+                btn.disabled = false;
+                btn.innerText = 'Create Account';
+            }
+        });
+
+        document.getElementById('forgot-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('forgot-btn');
+            const errEl = document.getElementById('err-msg');
+            const successEl = document.getElementById('forgot-success');
+            errEl.innerText = '';
+            successEl.style.display = 'none';
+            btn.disabled = true;
+            btn.innerText = 'Sending...';
+            try {
+                await api.auth.forgotPassword(document.getElementById('forgot-email').value);
+                successEl.style.display = '';
+                successEl.innerText = 'Reset link sent! Check your email.';
+                document.getElementById('forgot-email').value = '';
+            } catch (err) {
+                errEl.innerText = err.message || 'Could not send reset email';
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Send Reset Link';
+            }
+        });
+
+        document.getElementById('reset-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('reset-btn');
+            const errEl = document.getElementById('err-msg');
+            const pw  = document.getElementById('reset-password').value;
+            const pw2 = document.getElementById('reset-password2').value;
+            errEl.innerText = '';
+            if (pw.length < 6) { errEl.innerText = 'Password must be at least 6 characters.'; return; }
+            if (pw !== pw2)    { errEl.innerText = 'Passwords do not match.'; return; }
+            const token = new URLSearchParams(window.location.search).get('token');
+            if (!token) { errEl.innerText = 'Missing reset token.'; return; }
+            btn.disabled = true;
+            btn.innerText = 'Resetting...';
+            try {
+                await api.auth.resetPassword(token, pw);
+                document.getElementById('err-msg').style.color = '#2ecc71';
+                errEl.innerText = 'Password reset! Redirecting to login...';
+                setTimeout(() => { window.location.href = 'auth.html'; }, 2000);
+            } catch (err) {
+                document.getElementById('err-msg').style.color = '#ff4757';
+                errEl.innerText = err.message || 'Reset failed';
+                btn.disabled = false;
+                btn.innerText = 'Reset Password';
+            }
+        });
+    </script>
+</body>
+</html>

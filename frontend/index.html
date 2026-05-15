@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SNEAKR | Premium Footwear</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css?v=12">
+</head>
+<body>
+    <nav id="nav"></nav>
+
+    <main>
+        <section class="hero-section">
+            <div class="hero-text">
+                <p style="text-transform: uppercase; letter-spacing: 5px; color: var(--accent); margin-bottom: 1.5rem;">New Summer Collection</p>
+                <h1>STEP INTO<br>THE FUTURE</h1>
+                <a href="catalog.html" class="btn btn-primary">Shop Collection</a>
+            </div>
+            <div class="hero-visual">
+                <img src="premium_sneaker_1.png" class="hero-shoe" alt="Hero">
+            </div>
+        </section>
+
+        <div class="container">
+            <div class="section-title">
+                <h2>Featured Drops</h2>
+                <a href="catalog.html" style="font-size: 0.9rem; color: var(--text-dim)">View All</a>
+            </div>
+            <div class="home-brand-bar" style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 1.75rem;">
+                <span style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; color: var(--text-dim); font-weight: 600;">Brand</span>
+                <select id="home-brand-filter" class="form-control" style="max-width: 220px; padding: 0.5rem 0.75rem; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text);">
+                    <option value="">All brands</option>
+                </select>
+            </div>
+            <div class="product-grid" id="featured-grid">Loading...</div>
+        </div>
+    </main>
+
+    <div class="overlay" id="overlay"></div>
+    
+    <div class="modal" id="review-modal">
+        <h3 style="margin-bottom: 2rem; text-align: center; font-size: 1.5rem;">Leave a Review</h3>
+        <form id="leave-review-form">
+            <input type="hidden" id="review-product-id">
+            <div class="form-group">
+                <label>Rating</label>
+                <div class="star-rating" id="review-star-rating">
+                    <span class="star active" data-value="1">★</span>
+                    <span class="star active" data-value="2">★</span>
+                    <span class="star active" data-value="3">★</span>
+                    <span class="star active" data-value="4">★</span>
+                    <span class="star active" data-value="5">★</span>
+                </div>
+                <input type="hidden" id="review-rating" value="5">
+            </div>
+            <div class="form-group">
+                <label>Comment</label>
+                <textarea id="review-comment" rows="4" class="form-control" placeholder="Tell us what you think..." required></textarea>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+                <button type="button" class="btn btn-outline" style="flex: 1;" onclick="closeReviewModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary" style="flex: 1;">Submit</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Product Details Modal -->
+    <div class="modal modal-large" id="product-detail-modal">
+        <!-- Content will be injected by components.js -->
+    </div>
+
+    <div class="notification" id="notification"></div>
+    <footer id="footer"></footer>
+
+    <script src="js/api.js?v=12"></script>
+    <script src="js/state.js?v=12"></script>
+    <script src="js/components.js?v=12"></script>
+    <script>
+        // Star Rating Logic
+        document.getElementById('review-star-rating').addEventListener('click', (e) => {
+            if (e.target.classList.contains('star')) {
+                const val = parseInt(e.target.dataset.value);
+                document.getElementById('review-rating').value = val;
+                const stars = document.querySelectorAll('#review-star-rating .star');
+                stars.forEach(s => {
+                    const sVal = parseInt(s.dataset.value);
+                    if (sVal <= val) s.classList.add('active');
+                    else s.classList.remove('active');
+                });
+            }
+        });
+
+        window.openReviewModal = async (productId) => {
+            if (!state.user) {
+                showToast('Please login to leave a review.', 'error');
+                setTimeout(() => window.location.href = 'auth.html', 1500);
+                return;
+            }
+
+            // Fetch current reviews for this product to check if user already reviewed
+            try {
+                const res = await api.reviews.listByProduct(productId);
+                const reviews = Array.isArray(res) ? res : (res && res.reviews ? res.reviews : []);
+                if (reviews.some(r => r.userId === state.user.id)) {
+                    showToast('You have already reviewed this shoe.', 'info');
+                    return;
+                }
+            } catch (e) {
+                console.warn('Could not check existing reviews', e);
+            }
+
+            document.getElementById('review-product-id').value = productId;
+            document.getElementById('review-rating').value = '5';
+            document.getElementById('review-comment').value = '';
+            // Reset stars to 5
+            document.querySelectorAll('#review-star-rating .star').forEach(s => s.classList.add('active'));
+            
+            document.getElementById('review-modal').classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+        };
+
+        window.closeReviewModal = () => {
+            document.getElementById('review-modal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        };
+
+        window.openProductDetail = async (productId) => {
+            const modal = document.getElementById('product-detail-modal');
+            const overlay = document.getElementById('overlay');
+            modal.innerHTML = '<div style="padding: 4rem; color: var(--text-dim); text-align: center; width: 100%;">Loading details...</div>';
+            modal.classList.add('active');
+            overlay.classList.add('active');
+
+            try {
+                const p = await api.products.get(productId);
+                try {
+                    const res = await api.reviews.listByProduct(p.id);
+                    p.reviews = Array.isArray(res) ? res : (res && res.reviews ? res.reviews : []);
+                } catch (e) { p.reviews = []; }
+                
+                p.isFavorite = state.isFavorite(p.id);
+                modal.innerHTML = components.ProductDetailModal(p);
+            } catch (err) {
+                modal.innerHTML = '<div style="padding: 4rem; color: var(--accent); text-align: center; width: 100%;">Failed to load product details.</div>';
+            }
+        };
+
+        window.closeProductDetail = () => {
+            document.getElementById('product-detail-modal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        };
+
+        document.getElementById('leave-review-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const productId = document.getElementById('review-product-id').value;
+            const rating = parseInt(document.getElementById('review-rating').value);
+            const comment = document.getElementById('review-comment').value;
+            try {
+                await api.reviews.add(productId, rating, comment);
+                showToast('Review submitted successfully!', 'success');
+                closeReviewModal();
+                // If detail modal is open, refresh it
+                const detailModal = document.getElementById('product-detail-modal');
+                if (detailModal.classList.contains('active')) {
+                    openProductDetail(productId);
+                }
+            } catch (err) {
+                showToast('Failed to submit review: ' + err.message, 'error');
+            }
+        });
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            let featuredCache = { brand: '', rows: [] };
+
+            function renderFeatured() {
+                if (!featuredCache.rows.length) return;
+                const grid = document.getElementById('featured-grid');
+                if (!grid) return;
+                const products = featuredCache.rows.map(p => ({ ...p, isFavorite: state.isFavorite(p.id) }));
+                grid.innerHTML = products.map(p => components.ProductCard(p)).join('');
+            }
+
+            state.subscribe(() => {
+                document.getElementById('nav').innerHTML = components.Navbar(state);
+                renderFeatured();
+            });
+            await state.init();
+
+            function normalizeProductList(data) {
+                if (data == null) return [];
+                if (Array.isArray(data)) return data;
+                if (data.products && Array.isArray(data.products)) return data.products;
+                return [];
+            }
+
+            const grid = document.getElementById('featured-grid');
+            const brandSelect = document.getElementById('home-brand-filter');
+
+            async function loadFeatured(brand) {
+                grid.innerHTML = 'Loading...';
+                try {
+                    const params = brand ? { brand } : {};
+                    const raw = await api.products.list(params);
+                    const products = normalizeProductList(raw);
+                    if (products.length === 0) {
+                        featuredCache = { brand, rows: [] };
+                        grid.innerHTML = '<div class="catalog-empty-state" role="status">No products for this brand.</div>';
+                        return;
+                    }
+                    for (let p of products) {
+                        try {
+                            const res = await api.reviews.listByProduct(p.id);
+                            p.reviews = Array.isArray(res) ? res : (res && res.reviews ? res.reviews : []);
+                        } catch (e) {
+                            p.reviews = [];
+                        }
+                    }
+                    featuredCache = { brand, rows: products.slice(0, 4) };
+                    renderFeatured();
+                } catch (err) {
+                    console.error(err);
+                    featuredCache = { brand, rows: [] };
+                    grid.innerHTML = '<div class="catalog-empty-state" role="alert">Could not load products.</div>';
+                }
+            }
+
+            try {
+                const allRaw = await api.products.list();
+                const allProducts = normalizeProductList(allRaw);
+                const brands = [...new Set(allProducts.map(p => (p.brand || '').trim()).filter(Boolean))].sort();
+                for (const b of brands) {
+                    const opt = document.createElement('option');
+                    opt.value = b;
+                    opt.textContent = b;
+                    brandSelect.appendChild(opt);
+                }
+            } catch (e) {
+                console.warn('Could not load brand list', e);
+            }
+
+            brandSelect.addEventListener('change', () => loadFeatured(brandSelect.value));
+
+            await loadFeatured('');
+        });
+    </script>
+</body>
+</html>

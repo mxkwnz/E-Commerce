@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Orders | SNEAKR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav id="nav"></nav>
+
+    <main class="container">
+        <div class="section-title">
+            <h2>Order History</h2>
+        </div>
+        
+        <div id="orders-list">Loading orders...</div>
+    </main>
+
+    <div class="notification" id="notification"></div>
+    <footer id="footer"></footer>
+
+    <script src="js/api.js"></script>
+    <script src="js/state.js"></script>
+    <script src="js/components.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            state.subscribe(() => {
+                document.getElementById('nav').innerHTML = components.Navbar(state);
+            });
+            await state.init();
+            if (!state.user) window.location.href = 'auth.html';
+            loadOrders();
+        });
+
+        async function loadOrders() {
+            try {
+                const orders = await api.orders.list();
+                const list = document.getElementById('orders-list');
+                if (!orders || orders.length === 0) {
+                    list.innerHTML = '<p style="color: var(--text-dim)">You haven\'t placed any orders yet.</p>';
+                    return;
+                }
+                list.innerHTML = orders.map(o => `
+                    <div class="product-card" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; cursor: default; width: 100%">
+                        <div>
+                            <div style="font-weight: 800; font-size: 1.2rem; margin-bottom: 0.5rem">Order #${o.id.substring(0, 8)}</div>
+                            <div style="color: var(--text-dim); font-size: 0.85rem">${new Date(o.createdAt).toLocaleString()}</div>
+                        </div>
+                        <div style="text-align: right">
+                            <div class="product-price">$${o.totalAmount.toFixed(2)}</div>
+                            <div style="color: ${o.status === 'confirmed' ? '#2ecc71' : 'var(--accent)'}; text-transform: uppercase; font-size: 0.75rem; font-weight: 800; letter-spacing: 2px; margin-top: 0.5rem;">${o.status}</div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (err) { console.error(err); }
+        }
+    </script>
+</body>
+</html>

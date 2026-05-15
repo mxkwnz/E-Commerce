@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catalog | SNEAKR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css?v=12">
+    <style>
+        .catalog-layout { display: grid; grid-template-columns: 280px 1fr; gap: 4rem; margin-top: 2rem; align-items: start; }
+        .filter-sidebar { 
+            background: var(--surface); 
+            padding: 2.5rem; 
+            border-radius: 20px; 
+            border: 1px solid var(--border); 
+            position: sticky; 
+            top: 100px; 
+            max-height: calc(100vh - 140px);
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--accent) transparent;
+        }
+        .filter-sidebar::-webkit-scrollbar { width: 6px; }
+        .filter-sidebar::-webkit-scrollbar-thumb { background-color: var(--accent); border-radius: 10px; }
+
+        .filter-group { margin-bottom: 2.5rem; }
+        .filter-group h4 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1.5rem; color: var(--text-dim); font-weight: 800; }
+        .filter-options { display: flex; flex-direction: column; gap: 1rem; }
+        .filter-option { display: flex; align-items: center; gap: 1rem; cursor: pointer; color: var(--text); transition: var(--transition); font-size: 1rem; font-weight: 500; }
+        .filter-option:hover { color: var(--accent); }
+        .filter-option input { accent-color: var(--accent); width: 20px; height: 20px; cursor: pointer; }
+        
+        .search-container { margin-bottom: 3rem; position: relative; }
+        .search-input { width: 100%; padding: 1.2rem 1.2rem 1.2rem 3.5rem; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 15px; color: var(--text); font-family: inherit; font-size: 1rem; transition: var(--transition); }
+        .search-input:focus { border-color: var(--accent); outline: none; background: rgba(255,255,255,0.07); box-shadow: 0 0 20px rgba(22, 160, 133, 0.1); }
+        .search-icon { position: absolute; left: 1.4rem; top: 50%; transform: translateY(-50%); font-size: 1.2rem; opacity: 0.5; }
+
+        .catalog-main h2 { font-size: 3.5rem; font-weight: 800; margin-bottom: 3rem; letter-spacing: -1px; }
+
+        @media (max-width: 992px) {
+            .catalog-layout { grid-template-columns: 1fr; gap: 2rem; }
+            .filter-sidebar { position: static; max-height: none; }
+            .catalog-main h2 { font-size: 2.5rem; }
+        }
+    </style>
+</head>
+<body>
+    <nav id="nav"></nav>
+
+    <main class="container">
+        <div class="catalog-layout">
+            <aside class="filter-sidebar">
+                <div class="search-container">
+                    <span class="search-icon">&#128269;</span>
+                    <input type="text" id="catalog-search" class="search-input" placeholder="Search sneakers...">
+                </div>
+
+                <div class="filter-group">
+                    <h4>Gender</h4>
+                    <div class="filter-options">
+                        <label class="filter-option"><input type="radio" name="gender" value="all" checked> All</label>
+                        <label class="filter-option"><input type="radio" name="gender" value="men"> Men</label>
+                        <label class="filter-option"><input type="radio" name="gender" value="women"> Women</label>
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <h4>Category</h4>
+                    <div class="filter-options" id="category-filters">
+                        <label class="filter-option"><input type="checkbox" value="Running"> Running</label>
+                        <label class="filter-option"><input type="checkbox" value="Lifestyle"> Lifestyle</label>
+                        <label class="filter-option"><input type="checkbox" value="Basketball"> Basketball</label>
+                        <label class="filter-option"><input type="checkbox" value="Training"> Training</label>
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <h4>Brand</h4>
+                    <div class="filter-options" id="brand-filters">
+                        <label class="filter-option"><input type="checkbox" value="Nike"> Nike</label>
+                        <label class="filter-option"><input type="checkbox" value="Adidas"> Adidas</label>
+                        <label class="filter-option"><input type="checkbox" value="Puma"> Puma</label>
+                        <label class="filter-option"><input type="checkbox" value="Jordan"> Jordan</label>
+                    </div>
+                </div>
+
+            </aside>
+
+            <div class="catalog-main">
+                <div class="section-title">
+                    <h2>Full Collection</h2>
+                </div>
+                <div class="product-grid" id="catalog-grid">Loading...</div>
+            </div>
+        </div>
+    </main>
+
+    <div class="overlay" id="overlay"></div>
+    
+    <div class="modal" id="review-modal">
+        <h3 style="margin-bottom: 2rem; text-align: center; font-size: 1.5rem;">Leave a Review</h3>
+        <form id="leave-review-form">
+            <input type="hidden" id="review-product-id">
+            <div class="form-group">
+                <label>Rating</label>
+                <div class="star-rating" id="review-star-rating">
+                    <span class="star active" data-value="1">★</span>
+                    <span class="star active" data-value="2">★</span>
+                    <span class="star active" data-value="3">★</span>
+                    <span class="star active" data-value="4">★</span>
+                    <span class="star active" data-value="5">★</span>
+                </div>
+                <input type="hidden" id="review-rating" value="5">
+            </div>
+            <div class="form-group">
+                <label>Comment</label>
+                <textarea id="review-comment" rows="4" class="form-control" placeholder="Tell us what you think..." required></textarea>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+                <button type="button" class="btn btn-outline" style="flex: 1;" onclick="closeReviewModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary" style="flex: 1;">Submit</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Product Details Modal -->
+    <div class="modal modal-large" id="product-detail-modal">
+        <!-- Content will be injected by components.js -->
+    </div>
+
+    <div class="notification" id="notification"></div>
+    <footer id="footer"></footer>
+
+    <script src="js/api.js?v=12"></script>
+    <script src="js/state.js?v=12"></script>
+    <script src="js/components.js?v=12"></script>
+    <script>
+        // Star Rating Logic
+        document.getElementById('review-star-rating').addEventListener('click', (e) => {
+            if (e.target.classList.contains('star')) {
+                const val = parseInt(e.target.dataset.value);
+                document.getElementById('review-rating').value = val;
+                const stars = document.querySelectorAll('#review-star-rating .star');
+                stars.forEach(s => {
+                    const sVal = parseInt(s.dataset.value);
+                    if (sVal <= val) s.classList.add('active');
+                    else s.classList.remove('active');
+                });
+            }
+        });
+
+        window.openReviewModal = async (productId) => {
+            if (!state.user) {
+                showToast('Please login to leave a review.', 'error');
+                setTimeout(() => window.location.href = 'auth.html', 1500);
+                return;
+            }
+
+            // Fetch current reviews for this product to check if user already reviewed
+            try {
+                const res = await api.reviews.listByProduct(productId);
+                const reviews = Array.isArray(res) ? res : (res && res.reviews ? res.reviews : []);
+                if (reviews.some(r => r.userId === state.user.id)) {
+                    showToast('You have already reviewed this shoe.', 'info');
+                    return;
+                }
+            } catch (e) {
+                console.warn('Could not check existing reviews', e);
+            }
+
+            document.getElementById('review-product-id').value = productId;
+            document.getElementById('review-rating').value = '5';
+            document.getElementById('review-comment').value = '';
+            // Reset stars to 5
+            document.querySelectorAll('#review-star-rating .star').forEach(s => s.classList.add('active'));
+            
+            document.getElementById('review-modal').classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+        };
+
+        window.closeReviewModal = () => {
+            document.getElementById('review-modal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        };
+
+        window.openProductDetail = async (productId) => {
+            const modal = document.getElementById('product-detail-modal');
+            const overlay = document.getElementById('overlay');
+            modal.innerHTML = '<div style="padding: 4rem; color: var(--text-dim); text-align: center; width: 100%;">Loading details...</div>';
+            modal.classList.add('active');
+            overlay.classList.add('active');
+
+            try {
+                const p = await api.products.get(productId);
+                try {
+                    const res = await api.reviews.listByProduct(p.id);
+                    p.reviews = Array.isArray(res) ? res : (res && res.reviews ? res.reviews : []);
+                } catch (e) { p.reviews = []; }
+                
+                p.isFavorite = state.isFavorite(p.id);
+                modal.innerHTML = components.ProductDetailModal(p);
+            } catch (err) {
+                modal.innerHTML = '<div style="padding: 4rem; color: var(--accent); text-align: center; width: 100%;">Failed to load product details.</div>';
+            }
+        };
+
+        window.closeProductDetail = () => {
+            document.getElementById('product-detail-modal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        };
+
+        document.getElementById('leave-review-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const productId = document.getElementById('review-product-id').value;
+            const rating = parseInt(document.getElementById('review-rating').value);
+            const comment = document.getElementById('review-comment').value;
+            try {
+                await api.reviews.add(productId, rating, comment);
+                showToast('Review submitted successfully!', 'success');
+                closeReviewModal();
+                // If detail modal is open, refresh it
+                const detailModal = document.getElementById('product-detail-modal');
+                if (detailModal.classList.contains('active')) {
+                    openProductDetail(productId);
+                }
+            } catch (err) {
+                showToast('Failed to submit review: ' + err.message, 'error');
+            }
+        });
+
+        function normalizeProductList(data) {
+            if (data == null) return [];
+            if (Array.isArray(data)) return data;
+            if (data.products && Array.isArray(data.products)) return data.products;
+            return [];
+        }
+
+        let catalogProducts = [];
+
+        function renderCatalog() {
+            const grid = document.getElementById('catalog-grid');
+            if (!grid) return;
+            if (!catalogProducts.length) {
+                grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 4rem; color: var(--text-dim);">No products match your filters.</div>';
+                return;
+            }
+            grid.innerHTML = catalogProducts.map(p => components.ProductCard({
+                ...p,
+                isFavorite: state.isFavorite(p.id)
+            })).join('');
+        }
+
+        async function loadCatalog() {
+            const grid = document.getElementById('catalog-grid');
+            grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 4rem;">Loading...</div>';
+            
+            const gender = document.querySelector('input[name="gender"]:checked').value;
+            const q = document.getElementById('catalog-search').value;
+            
+            const categories = Array.from(document.querySelectorAll('#category-filters input:checked')).map(el => el.value);
+            const brands = Array.from(document.querySelectorAll('#brand-filters input:checked')).map(el => el.value);
+
+            try {
+                // For multiple categories/brands, we currently take the first one or just send as is
+                // Our backend now supports multiple if we use ListProductsWithFilter, 
+                // but the HTTP API collects single values for brand/category/gender/q.
+                // To support MULTIPLE brands/categories, we'd need to update main.go to use slices.
+                // For now, we'll use the first selected one to match the current backend logic,
+                // or we can update main.go to handle slices later.
+                
+                const filterParams = {};
+                if (gender !== 'all') filterParams.gender = gender;
+                if (q) filterParams.q = q;
+                if (categories.length > 0) filterParams.category = categories[0];
+                if (brands.length > 0) filterParams.brand = brands[0];
+
+                const raw = await api.products.list(filterParams);
+                const products = normalizeProductList(raw);
+                
+                for (let p of products) {
+                    try {
+                        const res = await api.reviews.listByProduct(p.id);
+                        p.reviews = Array.isArray(res) ? res : (res && res.reviews ? res.reviews : []);
+                    } catch (e) { p.reviews = []; }
+                }
+                
+                catalogProducts = products;
+                renderCatalog();
+            } catch (err) {
+                console.error(err);
+                grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 4rem; color: var(--accent);">Could not load products.</div>';
+            }
+        }
+
+        window.applyFilters = () => {
+            loadCatalog();
+        };
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            state.subscribe(() => {
+                document.getElementById('nav').innerHTML = components.Navbar(state);
+                renderCatalog();
+            });
+            await state.init();
+
+            // Add real-time search
+            document.getElementById('catalog-search').addEventListener('input', debounce(() => {
+                loadCatalog();
+            }, 500));
+
+            // Auto-apply on radio change
+            document.querySelectorAll('input[name="gender"]').forEach(el => {
+                el.addEventListener('change', loadCatalog);
+            });
+
+            // Auto-apply on checkbox change
+            document.querySelectorAll('#category-filters input, #brand-filters input').forEach(el => {
+                el.addEventListener('change', loadCatalog);
+            });
+
+            loadCatalog();
+        });
+
+        function debounce(func, wait) {
+            let timeout;
+            return function(...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+    </script>
+</body>
+</html>

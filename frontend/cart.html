@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopping Cart | SNEAKR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css?v=12">
+</head>
+<body>
+    <nav id="nav"></nav>
+
+    <main class="container" style="padding-top: 3rem; padding-bottom: 5rem;">
+        <div class="section-title">
+            <h2>Your Shopping Bag</h2>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 380px; gap: 4rem; align-items: start;">
+            <!-- Cart Items -->
+            <div id="cart-list">
+                <p style="color:var(--text-dim)">Loading your bag...</p>
+            </div>
+
+            <!-- Order Summary -->
+            <div style="background:var(--surface);padding:2rem;border-radius:12px;border:1px solid var(--border);position:sticky;top:6rem;">
+                <h3 style="text-transform:uppercase;letter-spacing:2px;margin-bottom:2rem;">Summary</h3>
+                <div style="display:flex;justify-content:space-between;margin-bottom:1rem;color:var(--text-dim);">
+                    <span>Subtotal</span>
+                    <span id="subtotal">$0.00</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:1rem;color:var(--text-dim);">
+                    <span>Shipping</span>
+                    <span>Free</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2rem;border-top:1px solid var(--border);padding-top:1.5rem;">
+                    <span style="font-weight:800;">Total</span>
+                    <span id="total" style="font-weight:800;color:var(--accent);font-size:1.5rem;">$0.00</span>
+                </div>
+                <div id="balance-row" style="display:none;padding:0.75rem 1rem;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--border);margin-bottom:1.5rem;font-size:0.85rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span style="color:var(--text-dim);">Your Balance</span>
+                        <span id="cart-balance" style="font-weight:700;">$0.00</span>
+                    </div>
+                    <div id="balance-warning" style="display:none;color:#ff4757;font-size:0.78rem;margin-top:0.4rem;">Insufficient — <a href="account.html" style="color:var(--accent);">Top up here</a></div>
+                </div>
+                <div id="checkout-area">
+                    <button class="btn btn-primary" id="checkout-btn" style="width:100%;" disabled>Complete Purchase</button>
+                    <p id="guest-notice" style="text-align:center;color:var(--text-dim);font-size:0.85rem;margin-top:1rem;display:none;">
+                        <a href="auth.html" style="color:var(--accent);">Login</a> to checkout
+                    </p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div class="notification" id="notification"></div>
+
+    <script src="js/api.js?v=12"></script>
+    <script src="js/state.js?v=12"></script>
+    <script src="js/components.js?v=12"></script>
+    <script>
+        const cartProductById = {};
+
+        async function hydrateCartProducts() {
+            if (!state.cart || state.cart.length === 0) return;
+            const listed = await api.products.list();
+            listed.forEach((p) => { cartProductById[p.id] = p; });
+            for (const item of state.cart) {
+                if (!cartProductById[item.productId]) {
+                    try {
+                        cartProductById[item.productId] = await api.products.get(item.productId);
+                    } catch (_) {
+                        cartProductById[item.productId] = null;
+                    }
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            state.subscribe(() => {
+                document.getElementById('nav').innerHTML = components.Navbar(state);
+                void renderCart();
+            });
+
+            await state.init();
+        });
+
+        async function renderCart() {
+            const list = document.getElementById('cart-list');
+            const subtotalEl = document.getElementById('subtotal');
+            const totalEl = document.getElementById('total');
+            const checkoutBtn = document.getElementById('checkout-btn');
+            const guestNotice = document.getElementById('guest-notice');
+
+            if (!state.cart || state.cart.length === 0) {
+                list.innerHTML = `
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:4rem;text-align:center;">
+                        <p style="font-size:3rem;margin-bottom:1rem;">&#128722;</p>
+                        <h3 style="margin-bottom:1rem;">Your bag is empty</h3>
+                        <p style="color:var(--text-dim);margin-bottom:2rem;">Add some sneakers to get started!</p>
+                        <a href="catalog.html" class="btn btn-primary" style="text-decoration:none;">Browse Catalog</a>
+                    </div>
+                `;
+                subtotalEl.innerText = '$0.00';
+                totalEl.innerText = '$0.00';
+                checkoutBtn.disabled = true;
+
+                if (state.user) {
+                    guestNotice.style.display = 'none';
+                } else {
+                    guestNotice.style.display = 'block';
+                    checkoutBtn.style.display = 'none';
+                }
+                return;
+            }
+
+            await hydrateCartProducts();
+            list.innerHTML = state.cart.map((item) => components.CartItem(item, cartProductById[item.productId])).join('');
+            const sum = state.cart.reduce((acc, item) => acc + ((item.unitPrice || 0) * (item.quantity || 1)), 0);
+            subtotalEl.innerText = `$${sum.toFixed(2)}`;
+            totalEl.innerText = `$${sum.toFixed(2)}`;
+
+            if (state.user) {
+                checkoutBtn.disabled = false;
+                checkoutBtn.style.display = '';
+                guestNotice.style.display = 'none';
+                // Show balance row
+                const balRow = document.getElementById('balance-row');
+                const balEl  = document.getElementById('cart-balance');
+                const balWarn = document.getElementById('balance-warning');
+                const bal = typeof state.user.balance === 'number'
+                    ? state.user.balance
+                    : parseFloat(state.user.balance) || 0;
+                balRow.style.display = '';
+                balEl.innerText = '$' + bal.toFixed(2);
+                balEl.style.color = bal < sum ? '#ff4757' : '#2ecc71';
+                balWarn.style.display = bal < sum ? '' : 'none';
+                checkoutBtn.onclick = () => doCheckout(sum);
+            } else {
+                checkoutBtn.style.display = 'none';
+                guestNotice.style.display = 'block';
+            }
+        }
+
+        async function doCheckout(sum) {
+            const btn = document.getElementById('checkout-btn');
+            btn.disabled = true;
+            btn.innerText = 'Processing...';
+            try {
+                // Fetch the latest user data to get current balance
+                let userBalance = 0;
+                try {
+                    const freshUser = await api.users.get(state.user.id);
+                    userBalance = typeof freshUser.balance === 'number'
+                        ? freshUser.balance
+                        : parseFloat(freshUser.balance) || 0;
+                    // Update local state
+                    state.user = { ...state.user, ...freshUser };
+                } catch (_) {
+                    userBalance = typeof state.user.balance === 'number'
+                        ? state.user.balance
+                        : parseFloat(state.user.balance) || 0;
+                }
+
+                if (userBalance <= 0) {
+                    showToast('Insufficient balance. Please top up your account first.', 'error');
+                    btn.disabled = false;
+                    btn.innerText = 'Complete Purchase';
+                    return;
+                }
+                if (userBalance < sum) {
+                    const shortfall = (sum - userBalance).toFixed(2);
+                    showToast(`Insufficient balance. You need $${shortfall} more. Top up in your account.`, 'error');
+                    btn.disabled = false;
+                    btn.innerText = 'Complete Purchase';
+                    return;
+                }
+
+                const order = await api.orders.checkout();
+                await api.payments.pay({
+                    orderId: order.orderId,
+                    amount: sum,
+                    currency: 'USD',
+                    paymentMethod: 'credit_card'
+                });
+                showToast('Order confirmed! Redirecting...', 'success');
+                setTimeout(() => window.location.href = 'account.html', 2000);
+            } catch (err) {
+                showToast('Checkout failed: ' + (err.message || 'Unknown error'), 'error');
+                btn.disabled = false;
+                btn.innerText = 'Complete Purchase';
+            }
+        }
+    </script>
+</body>
+</html>
