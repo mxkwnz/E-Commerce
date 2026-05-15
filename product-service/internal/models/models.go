@@ -13,6 +13,8 @@ type Product struct {
 	Category    string    `json:"category,omitempty"`
 	Stock       int       `json:"stock,omitempty"`
 	IsDeleted   bool      `json:"isDeleted"`
+	Gender      string    `json:"gender,omitempty"`
+	Sizes       []string  `json:"sizes,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -26,4 +28,21 @@ type Inventory struct {
 	IsDeleted bool      `json:"isDeleted"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type Review struct {
+	ID        string    `json:"id"`
+	ProductID string    `json:"productId"`
+	UserID    string    `json:"userId"`
+	Rating    int       `json:"rating"`
+	Comment   string    `json:"comment,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type ProductFilter struct {
+	Brand    string `json:"brand"`
+	Category string `json:"category"`
+	Gender   string `json:"gender"`
+	Search   string `json:"search"`
 }

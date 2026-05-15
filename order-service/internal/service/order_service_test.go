@@ -48,7 +48,46 @@ func (m *mockOrderRepo) UpdateStatus(orderID, status string) error {
 		m.status = make(map[string]string)
 	}
 	m.status[orderID] = status
+	// Update the order status in the mock list as well
+	for i, o := range m.orders {
+		if o.ID == orderID {
+			m.orders[i].Status = status
+			break
+		}
+	}
 	return nil
+}
+
+func (m *mockOrderRepo) Search(userID, query string) ([]models.Order, error) {
+	return m.GetByUserID(userID)
+}
+
+func (m *mockOrderRepo) ListOrders(userID, status, _ string, limit int) ([]models.Order, error) {
+	orders, err := m.GetByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	var result []models.Order
+	for _, o := range orders {
+		if status != "" && o.Status != status {
+			continue
+		}
+		result = append(result, o)
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+func (m *mockOrderRepo) SoftDelete(orderID string) error {
+	for i, o := range m.orders {
+		if o.ID == orderID {
+			m.orders[i].IsDeleted = true
+			return nil
+		}
+	}
+	return fmt.Errorf("order not found")
 }
 
 func TestCheckout_ValidCart(t *testing.T) {

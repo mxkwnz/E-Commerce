@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"payment-service/internal/repository"
 	"syscall"
 	"time"
 
@@ -42,7 +43,8 @@ func main() {
 		log.Println("[NATS] connected")
 	}
 
-	paymentSvc := service.NewPaymentService()
+	paymentRepo := repository.NewPaymentRepository()
+	paymentSvc := service.NewPaymentService(paymentRepo)
 
 	if nc != nil {
 		sub := messaging.NewSubscriber(nc, paymentSvc)

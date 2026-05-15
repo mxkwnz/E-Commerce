@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"fmt"
 	"testing"
 
@@ -65,7 +66,7 @@ func (m *mockCartRepo) ClearUserCart(userID string) error {
 	return nil
 }
 
-func (m *mockCartRepo) ClearUserCartTx(tx interface{}, userID string) error {
+func (m *mockCartRepo) ClearUserCartTx(_ *sql.Tx, userID string) error {
 	return m.ClearUserCart(userID)
 }
 

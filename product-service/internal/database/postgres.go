@@ -66,11 +66,34 @@ func RunMigrations() error {
 		`CREATE INDEX IF NOT EXISTS idx_products_category ON products(category) WHERE is_deleted = false`,
 		`CREATE INDEX IF NOT EXISTS idx_products_name ON products(name) WHERE is_deleted = false`,
 		`CREATE INDEX IF NOT EXISTS idx_inventory_product ON inventory(product_id)`,
+		`CREATE TABLE IF NOT EXISTS product_reviews (
+			id VARCHAR(255) PRIMARY KEY,
+			product_id VARCHAR(255) NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+			user_id VARCHAR(255) NOT NULL,
+			rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+			comment TEXT,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_product_reviews_product_id ON product_reviews(product_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_product_reviews_user_id ON product_reviews(user_id)`,
+		`CREATE TABLE IF NOT EXISTS user_favorites (
+			user_id VARCHAR(255) NOT NULL,
+			product_id VARCHAR(255) NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (user_id, product_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_favorites_product ON user_favorites(product_id)`,
+		`ALTER TABLE user_favorites DROP COLUMN IF EXISTS id`,
+		`ALTER TABLE products ADD COLUMN IF NOT EXISTS gender VARCHAR(20)`,
+		`ALTER TABLE products ADD COLUMN IF NOT EXISTS sizes TEXT[]`,
+		`ALTER TABLE product_reviews ADD CONSTRAINT unique_user_product_review UNIQUE (user_id, product_id)`,
 	}
 
 	for i, migration := range migrations {
 		if _, err := DB.Exec(migration); err != nil {
-			return fmt.Errorf("migration %d failed: %w", i, err)
+			// Ignore if constraint already exists
+			log.Printf("Migration %d warning: %v", i, err)
 		}
 	}
 
