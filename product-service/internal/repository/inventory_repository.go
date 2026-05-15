@@ -76,3 +76,56 @@ func (r *InventoryRepository) Release(productID string, amount int) error {
 	}
 	return nil
 }
+
+func (r *InventoryRepository) List(productID, brand string) ([]models.Inventory, error) {
+	q := `SELECT i.id, i.product_id, i.quantity, i.reserved, i.is_deleted, i.created_at, i.updated_at
+		  FROM inventory i
+		  JOIN products p ON p.id = i.product_id AND p.is_deleted = false
+		  WHERE i.is_deleted = false`
+	args := []interface{}{}
+	n := 1
+	if productID != "" {
+		q += fmt.Sprintf(" AND i.product_id = $%d", n)
+		args = append(args, productID)
+		n++
+	}
+	if brand != "" {
+		q += fmt.Sprintf(" AND LOWER(p.brand) = LOWER($%d)", n)
+		args = append(args, brand)
+		n++
+	}
+	q += ` ORDER BY p.name ASC`
+
+	rows, err := database.DB.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []models.Inventory
+	for rows.Next() {
+		var inv models.Inventory
+		if err := rows.Scan(&inv.ID, &inv.ProductID, &inv.Quantity, &inv.Reserved,
+			&inv.IsDeleted, &inv.CreatedAt, &inv.UpdatedAt); err != nil {
+			return nil, err
+		}
+		inv.Available = inv.Quantity - inv.Reserved
+		list = append(list, inv)
+	}
+	return list, nil
+}
+
+func (r *InventoryRepository) SoftDeleteByProductID(productID string) error {
+	res, err := database.DB.Exec(
+		`UPDATE inventory SET is_deleted = true, updated_at = CURRENT_TIMESTAMP WHERE product_id = $1`,
+		productID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("inventory not found")
+	}
+	return nil
+}

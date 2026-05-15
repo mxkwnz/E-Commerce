@@ -22,8 +22,9 @@ type ProductServer struct {
 func NewProductServer() *ProductServer {
 	productRepo := repository.NewProductRepository()
 	invRepo := repository.NewInventoryRepository()
+	favRepo := repository.NewFavoriteRepository()
 	return &ProductServer{
-		productService: service.NewProductService(productRepo, invRepo),
+		productService: service.NewProductService(productRepo, invRepo, favRepo),
 	}
 }
 
