@@ -21,6 +21,7 @@ service AuthService {
   rpc ForgotPassword(ForgotPasswordRequest) returns (ForgotPasswordResponse);
   rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);
   rpc VerifyResetToken(VerifyResetTokenRequest) returns (VerifyResetTokenResponse);
+  rpc DeductBalance(DeductBalanceRequest) returns (DeductBalanceResponse);
 }
 
 message User {
@@ -152,4 +153,14 @@ message VerifyResetTokenResponse {
   bool valid = 1;
   string user_id = 2;
   string message = 3;
+}
+
+message DeductBalanceRequest {
+  string user_id = 1;
+  double amount = 2;
+}
+
+message DeductBalanceResponse {
+  bool success = 1;
+  string message = 2;
 }

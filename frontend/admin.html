@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard | SNEAKR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css?v=12">
+    <style>
+        .admin-layout { display: grid; grid-template-columns: 250px 1fr; gap: 2rem; margin-top: 2rem; min-height: 60vh; }
+        .admin-sidebar { background: var(--surface); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--border); height: fit-content; }
+        .admin-nav { list-style: none; padding: 0; margin: 0; }
+        .admin-nav li { margin-bottom: 0.5rem; }
+        .admin-nav button { width: 100%; text-align: left; padding: 1rem; background: transparent; border: 1px solid transparent; color: var(--text); font-family: 'Outfit', sans-serif; font-size: 1rem; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+        .admin-nav button:hover { background: rgba(255, 255, 255, 0.05); }
+        .admin-nav button.active { background: var(--accent); color: white; font-weight: 600; }
+        
+        .admin-content { background: var(--surface); padding: 2rem; border-radius: 12px; border: 1px solid var(--border); }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+        
+        .data-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        .data-table th, .data-table td { padding: 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+        .data-table th { font-weight: 600; color: var(--text-dim); text-transform: uppercase; font-size: 0.8rem; letter-spacing: 1px; }
+        .data-table tr:hover td { background: rgba(255, 255, 255, 0.02); }
+        
+        .action-btn { background: none; border: none; cursor: pointer; padding: 0.25rem 0.5rem; border-radius: 4px; font-family: 'Outfit', sans-serif; font-size: 0.8rem; }
+        .btn-edit { color: #3498db; }
+        .btn-edit:hover { background: rgba(52, 152, 219, 0.1); }
+        .btn-delete { color: #e74c3c; }
+        .btn-delete:hover { background: rgba(231, 76, 60, 0.1); }
+
+        .modal-content { max-width: 500px; }
+        #shoe-modal { 
+            max-width: 600px; 
+            max-height: 90vh; 
+            overflow-y: auto; 
+            padding: 4rem; 
+            scrollbar-width: thin;
+        }
+        #shoe-modal::-webkit-scrollbar { width: 6px; }
+        #shoe-modal::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 10px; }
+
+        .form-group { margin-bottom: 2rem; }
+        .form-group label { display: block; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 1rem; }
+        .form-control { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; padding: 1.2rem; color: var(--text); font-family: 'Outfit', sans-serif; font-size: 1rem; width: 100%; transition: all 0.2s; }
+        .form-control:focus { border-color: var(--accent); outline: none; background: rgba(255,255,255,0.06); box-shadow: 0 0 15px rgba(22, 160, 133, 0.1); }
+    </style>
+</head>
+<body>
+    <nav id="nav"></nav>
+
+    <main class="container">
+        <div class="section-title" style="margin-top: 2rem;">
+            <h2>Admin Dashboard</h2>
+        </div>
+        
+        <div class="admin-layout">
+            <aside class="admin-sidebar">
+                <ul class="admin-nav">
+                    <li><button onclick="switchTab('shoes')" id="tab-btn-shoes" class="active">Manage Shoes</button></li>
+                    <li><button onclick="switchTab('users')" id="tab-btn-users">Manage Users</button></li>
+                    <li><button onclick="switchTab('orders')" id="tab-btn-orders">Manage Orders</button></li>
+                    <li><button onclick="switchTab('reviews')" id="tab-btn-reviews">Manage Reviews</button></li>
+                </ul>
+            </aside>
+            
+            <section class="admin-content">
+                <!-- SHOES TAB -->
+                <div id="tab-shoes" class="tab-pane active">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                        <h3>Shoes Catalog</h3>
+                        <button class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.9rem;" onclick="openShoeModal()">+ Add Shoe</button>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Image</th>
+                                    <th>Name</th>
+                                    <th>Price</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="shoes-tbody">
+                                <tr><td colspan="5">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- USERS TAB -->
+                <div id="tab-users" class="tab-pane">
+                    <h3 style="margin-bottom: 1.5rem;">User Accounts</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Email</th>
+                                    <th>Username</th>
+                                    <th>Role</th>
+                                </tr>
+                            </thead>
+                            <tbody id="users-tbody">
+                                <tr><td colspan="4">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ORDERS TAB -->
+                <div id="tab-orders" class="tab-pane">
+                    <h3 style="margin-bottom: 1.5rem;">Orders Overview</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Order ID</th>
+                                    <th>User ID</th>
+                                    <th>Total</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orders-tbody">
+                                <tr><td colspan="4">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- REVIEWS TAB -->
+                <div id="tab-reviews" class="tab-pane">
+                    <h3 style="margin-bottom: 1.5rem;">Product Reviews</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Shoe</th>
+                                    <th>User</th>
+                                    <th>Rating</th>
+                                    <th>Comment</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="reviews-tbody">
+                                <tr><td colspan="5">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <div class="overlay" id="overlay"></div>
+    
+    <!-- ADD/EDIT SHOE MODAL -->
+    <div class="modal" id="shoe-modal">
+        <h3 id="shoe-modal-title" style="margin-bottom: 2rem; text-align: center; font-size: 1.5rem;">Add Shoe</h3>
+        <form id="shoe-form">
+            <input type="hidden" id="shoe-id">
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="shoe-name" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label>Brand</label>
+                <input type="text" id="shoe-brand" class="form-control">
+            </div>
+            <div class="form-group">
+                <label>Price</label>
+                <input type="number" id="shoe-price" step="0.01" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label>Category</label>
+                <input type="text" id="shoe-category" class="form-control" placeholder="e.g. Running, Lifestyle">
+            </div>
+            <div class="form-group">
+                <label>Image URL</label>
+                <input type="text" id="shoe-image" class="form-control" value="premium_sneaker_1.png">
+            </div>
+            <div class="form-group">
+                <label>Gender</label>
+                <select id="shoe-gender" class="form-control">
+                    <option value="">Select Gender</option>
+                    <option value="men">Men</option>
+                    <option value="women">Women</option>
+                    <option value="unisex">Unisex</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Available Sizes (comma separated, e.g. 40,41,42)</label>
+                <input type="text" id="shoe-sizes" class="form-control" placeholder="40,41,42">
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+                <button type="button" class="btn btn-outline" style="flex: 1;" onclick="closeShoeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary" style="flex: 1;">Save</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="notification" id="notification"></div>
+
+    <script src="js/api.js?v=12"></script>
+    <script src="js/state.js?v=12"></script>
+    <script src="js/components.js?v=12"></script>
+    <script>
+        function switchTab(tabId) {
+            ['shoes', 'users', 'orders', 'reviews'].forEach(t => {
+                document.getElementById('tab-' + t).classList.remove('active');
+                document.getElementById('tab-btn-' + t).classList.remove('active');
+            });
+            document.getElementById('tab-' + tabId).classList.add('active');
+            document.getElementById('tab-btn-' + tabId).classList.add('active');
+            
+            if (tabId === 'shoes') loadShoes();
+            else if (tabId === 'users') loadUsers();
+            else if (tabId === 'orders') loadOrders();
+            else if (tabId === 'reviews') loadReviews();
+        }
+
+        // SHOE MANAGEMENT
+        async function loadShoes() {
+            try {
+                const products = await api.products.list();
+                const tbody = document.getElementById('shoes-tbody');
+                if (!products || products.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-dim);">No shoes found.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = products.map(p => `
+                    <tr>
+                        <td style="color: var(--text-dim); font-size: 0.85rem;">${p.id.substring(0, 8)}...</td>
+                        <td><img src="${p.photoUrl || p.image_url || 'premium_sneaker_1.png'}" style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;" onerror="this.src='premium_sneaker_1.png'"></td>
+                        <td style="font-weight: 600;">${p.name}</td>
+                        <td style="color: var(--accent);">$${p.price.toFixed(2)}</td>
+                        <td>
+                            <button class="action-btn btn-edit" onclick="openShoeModal('${p.id}')">Edit</button>
+                            <button class="action-btn btn-delete" onclick="deleteShoe('${p.id}')">Delete</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                document.getElementById('shoes-tbody').innerHTML = '<tr><td colspan="5" style="color: red;">Error loading shoes</td></tr>';
+            }
+        }
+
+        function openShoeModal(id = null) {
+            const form = document.getElementById('shoe-form');
+            form.reset();
+            document.getElementById('shoe-id').value = id || '';
+            document.getElementById('shoe-modal-title').innerText = id ? 'Edit Shoe' : 'Add Shoe';
+            
+            if (id) {
+                api.products.get(id).then(p => {
+                    document.getElementById('shoe-name').value = p.name;
+                    document.getElementById('shoe-brand').value = p.brand || '';
+                    document.getElementById('shoe-price').value = p.price;
+                    document.getElementById('shoe-category').value = p.category || '';
+                    document.getElementById('shoe-image').value = p.photoUrl || p.image_url || 'premium_sneaker_1.png';
+                    document.getElementById('shoe-gender').value = p.gender || '';
+                    document.getElementById('shoe-sizes').value = p.sizes ? p.sizes.join(',') : '';
+                }).catch(err => showToast('Failed to load product details', 'error'));
+            } else {
+                document.getElementById('shoe-image').value = 'premium_sneaker_1.png';
+            }
+            
+            document.getElementById('shoe-modal').classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+        }
+
+        function closeShoeModal() {
+            document.getElementById('shoe-modal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        }
+
+        document.getElementById('shoe-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('shoe-id').value;
+            const data = {
+                name: document.getElementById('shoe-name').value,
+                brand: document.getElementById('shoe-brand').value,
+                price: parseFloat(document.getElementById('shoe-price').value),
+                category: document.getElementById('shoe-category').value,
+                photoUrl: document.getElementById('shoe-image').value,
+                gender: document.getElementById('shoe-gender').value,
+                sizes: document.getElementById('shoe-sizes').value ? document.getElementById('shoe-sizes').value.split(',').map(s => s.trim()) : [],
+                currency: 'USD'
+            };
+
+            try {
+                if (id) {
+                    await api.products.update(id, data);
+                    showToast('Shoe updated successfully', 'success');
+                } else {
+                    await api.products.add(data);
+                    showToast('Shoe added successfully', 'success');
+                }
+                closeShoeModal();
+                loadShoes();
+            } catch (err) {
+                showToast(err.message || 'Error saving shoe', 'error');
+            }
+        });
+
+        async function deleteShoe(id) {
+            if (!confirm('Are you sure you want to delete this shoe?')) return;
+            try {
+                await api.products.delete(id);
+                showToast('Shoe deleted', 'success');
+                loadShoes();
+            } catch (err) {
+                showToast(err.message || 'Failed to delete shoe', 'error');
+            }
+        }
+
+        // USER MANAGEMENT
+        async function loadUsers() {
+            try {
+                const users = await api.users.list();
+                const tbody = document.getElementById('users-tbody');
+                if (!users || users.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-dim);">No users found.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = users.map(u => `
+                    <tr>
+                        <td style="color: var(--text-dim); font-size: 0.85rem;">${u.id.substring(0, 8)}...</td>
+                        <td>${u.email}</td>
+                        <td style="font-weight: 600;">${u.username || '-'}</td>
+                        <td><span style="padding: 0.25rem 0.5rem; background: rgba(255,255,255,0.1); border-radius: 4px; font-size: 0.8rem;">${u.role || 'user'}</span></td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                document.getElementById('users-tbody').innerHTML = '<tr><td colspan="4" style="color: red;">Error loading users</td></tr>';
+            }
+        }
+
+        // ORDER MANAGEMENT
+        async function loadOrders() {
+            try {
+                const orders = await api.orders.list();
+                const tbody = document.getElementById('orders-tbody');
+                if (!orders || orders.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-dim);">No orders found.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = orders.map(o => `
+                    <tr>
+                        <td style="font-weight: 600; font-size: 0.9rem;">#${o.id.substring(0, 8)}</td>
+                        <td style="color: var(--text-dim); font-size: 0.85rem;">${o.userId.substring(0, 8)}...</td>
+                        <td style="color: var(--accent);">$${o.totalAmount.toFixed(2)}</td>
+                        <td><span style="display: inline-block; padding: 0.25rem 0.75rem; background: ${o.status === 'confirmed' ? 'rgba(46, 204, 113, 0.1)' : 'rgba(255, 71, 87, 0.1)'}; color: ${o.status === 'confirmed' ? '#2ecc71' : 'var(--accent)'}; border-radius: 20px; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">${o.status}</span></td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                document.getElementById('orders-tbody').innerHTML = '<tr><td colspan="4" style="color: red;">Error loading orders</td></tr>';
+            }
+        }
+
+        // REVIEW MANAGEMENT
+        async function loadReviews() {
+            try {
+                const reviews = await api.reviews.list();
+                const tbody = document.getElementById('reviews-tbody');
+                if (!reviews || reviews.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-dim);">No reviews found.</td></tr>';
+                    return;
+                }
+
+                // Fetch products to show names
+                const products = await api.products.list();
+                const prodMap = {};
+                products.forEach(p => prodMap[p.id] = p.name);
+
+                tbody.innerHTML = reviews.map(r => `
+                    <tr>
+                        <td style="font-weight: 600; font-size: 0.85rem;">${prodMap[r.productId] || r.productId.substring(0,8)}</td>
+                        <td style="color: var(--text-dim); font-size: 0.85rem;">${r.userId.substring(0, 8)}...</td>
+                        <td><span style="color:#f39c12;">${'★'.repeat(r.rating)}</span></td>
+                        <td style="font-size: 0.85rem; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${r.comment}</td>
+                        <td>
+                            <button class="action-btn btn-delete" onclick="deleteReviewAdmin('${r.id}')">Delete</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                document.getElementById('reviews-tbody').innerHTML = '<tr><td colspan="5" style="color: red;">Error loading reviews</td></tr>';
+            }
+        }
+
+        async function deleteReviewAdmin(id) {
+            if (!confirm('Are you sure you want to delete this review?')) return;
+            try {
+                await api.reviews.delete(id);
+                showToast('Review deleted', 'success');
+                loadReviews();
+            } catch (err) {
+                showToast(err.message || 'Failed to delete review', 'error');
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            state.subscribe(() => {
+                document.getElementById('nav').innerHTML = components.Navbar(state);
+            });
+            await state.init();
+            
+            if (!state.user || state.user.role !== 'admin') {
+                showToast('Unauthorized access. Admin only.', 'error');
+                // Allow viewing for demo purposes if backend doesn't enforce, but usually we would redirect
+                // setTimeout(() => window.location.href = 'index.html', 1500);
+            }
+            
+            // Initial load
+            loadShoes();
+        });
+    </script>
+</body>
+</html>
